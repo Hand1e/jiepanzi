@@ -123,7 +123,7 @@
       window.addEventListener('keydown', function (e) {
         if (e.key === 'ArrowLeft' || e.key === 'a') input.keys = -1;
         if (e.key === 'ArrowRight' || e.key === 'd') input.keys = 1;
-        if (e.key === ' ' || e.key === 'Enter') onTap(W / 2, H / 2);
+        if (e.key === ' ' || e.key === 'Enter') { if (G.state === 'title') startGame(mode); else onTap(W / 2, H / 2); }
       });
       window.addEventListener('keyup', function (e) {
         if ((e.key === 'ArrowLeft' || e.key === 'a') && input.keys < 0) input.keys = 0;
@@ -162,6 +162,7 @@
   // ================= 游戏状态 =================
   var G = {};
   var best = parseInt(store('plate_best') || '0', 10) || 0;
+  var mode = store('plate_mode') === 'head' ? 'head' : 'hand';   // hand=用手托  head=用头顶
 
   function resetGame() {
     G = {
@@ -180,7 +181,9 @@
     };
   }
 
-  function startGame() {
+  function startGame(m) {
+    if (m === 'hand' || m === 'head') { mode = m; store('plate_mode', m); }
+    N_CROSS = mode === 'head' ? 13 : 15;   // 脑袋比手掌难扶
     initAudio();
     requestTilt();
     resetGame();
@@ -595,6 +598,11 @@
         '最上面那个是' + plate + '！最贵的那批！'
       );
     }
+    if (mode === 'head') open.push(
+      '谁教你拿脑袋顶盘子的？！杂技团招人你去啊！',
+      '用头顶？你当这是马戏团呢？',
+      '你脖子歪成那样，盘子能不倒吗？'
+    );
     if (G.isRecord && n >= 5) open.push('叠了' + n + '个，比上回多，那又怎样？最后还不是全碎了。');
     if (f >= 3) open.push('这已经是今天第' + f + '回了。', '第' + f + '次了！我都不想数了。');
 
@@ -602,7 +610,7 @@
     body.push(
       '一个盘子进价二十八，你自己算算，' + b + '个就是' + money + '块。',
       plate === '盘子' ? '这批盘子从景德镇订的，补货要等一个礼拜。' : '这' + plate + '是景德镇订的，补货要等一个礼拜。',
-      '扣钱是小事，碎片崩到客人脚边怎么办？出了事谁负责？',
+      mode === 'head' ? '碎片掉你头上扎破了算谁的？工伤我可不认！' : '扣钱是小事，碎片崩到客人脚边怎么办？出了事谁负责？',
       '监控我全看着呢，别跟我说是盘子自己倒的。',
       '上个月刚给你涨了两百，你就这么报答我？',
       '隔壁老李家的小伙子，一手能托二十个。',
@@ -637,8 +645,7 @@
   var buttons = [];
   function onTap(x, y) {
     initAudio();
-    if (G.state === 'title') { startGame(); return; }
-    if (G.state === 'boss' && G.bossT > 1.0) {
+    if (G.state === 'title' || (G.state === 'boss' && G.bossT > 1.0)) {
       for (var i = 0; i < buttons.length; i++) {
         var b = buttons[i];
         if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) { b.fn(); return; }
@@ -745,105 +752,217 @@
     ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(vb.l - 50, FLOOR, vb.r - vb.l + 100, 6);
   }
 
-  // 侧面托盘的手：四指朝左平伸、指尖微翘，拇指在前面扣住最下面的盘子
-  var HAND_DROP = 0.11, HS = 1.35;   // 手的下移量、放大倍数（以盘宽为单位）
   function skinGrad(y0, y1) {
     var g = ctx.createLinearGradient(0, y0, 0, y1);
     g.addColorStop(0, '#f8d5b0'); g.addColorStop(0.55, '#eab68a'); g.addColorStop(1, '#c9875a');
     return g;
   }
+  function quad(a, b, c, d) {
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(d[0], d[1]); ctx.closePath(); ctx.fill();
+  }
+  // 标题页轮流展示两种姿势
+  function showMode() { return G.state === 'title' ? (Math.floor(G.t / 2.6) % 2 ? 'head' : 'hand') : mode; }
+  function drawCarrier() { if (showMode() === 'head') drawHead(); else drawHandBack(); }
+  function drawCarrierFront() { if (showMode() === 'hand') drawHandFront(); }
 
-  function drawArmAndHand() {
-    var u = PW, hx = G.hx, pa = palmAngle();
-    var vb = viewBounds();
+  // —— 正面托盘：小臂从下面竖上来，手掌平托在盘底 ——
+  function drawHandBack() {
+    var u = PW, hx = G.hx, pa = palmAngle(), vb = viewBounds();
     var c = Math.cos(pa), sn = Math.sin(pa);
-    // 手腕（手掌坐标 0.34u, 0.13u 处）的世界坐标
-    var lx = 0.36 * HS * u, ly = (0.15 * HS + HAND_DROP) * u;
-    var wx = hx + lx * c - ly * sn, wy = lx * sn + ly * c;
-    // 肘部在屏幕下方偏右，随手移动一点点（像真人手臂绕肘转）
-    var ex = hx * 0.35 + u * 0.95, ey = Math.max(vb.b, FLOOR) + u * 0.5;
+    var lx = 0.0, ly = 0.4;                              // 手腕在手掌坐标里的位置
+    var wx = hx + (lx * c - ly * sn) * u, wy = (lx * sn + ly * c) * u;
+    var ex = hx * 0.55 + u * 0.3, ey = Math.max(vb.b, FLOOR) + u * 0.4;   // 肘在屏幕下方
     var dx = ex - wx, dy = ey - wy, L = Math.sqrt(dx * dx + dy * dy) || 1;
     dx /= L; dy /= L;
     var nx = -dy, ny = dx;
-    function P(t, w) { return [wx + dx * L * t + nx * w * u, wy + dy * L * t + ny * w * u]; }
-
-    // 小臂（皮肤）
-    var a1 = P(0, 0.12), a2 = P(0.42, 0.165), a3 = P(0.42, -0.165), a4 = P(0, -0.12);
+    function P(d, w) { return [wx + dx * d * u + nx * w * u, wy + dy * d * u + ny * w * u]; }
+    var Lu = L / u;
+    // 小臂
     var g = ctx.createLinearGradient(wx + nx * 0.16 * u, wy + ny * 0.16 * u, wx - nx * 0.16 * u, wy - ny * 0.16 * u);
     g.addColorStop(0, '#c9875a'); g.addColorStop(0.45, '#f2c49c'); g.addColorStop(1, '#d99a6c');
     ctx.fillStyle = g;
-    ctx.beginPath(); ctx.moveTo(a1[0], a1[1]); ctx.lineTo(a2[0], a2[1]); ctx.lineTo(a3[0], a3[1]); ctx.lineTo(a4[0], a4[1]); ctx.closePath(); ctx.fill();
-
-    // 挽起来的白衬衫袖子
-    var s1 = P(0.38, 0.21), s2 = P(1.2, 0.29), s3 = P(1.2, -0.29), s4 = P(0.38, -0.21);
-    var sg = ctx.createLinearGradient(s1[0], s1[1], s4[0], s4[1]);
+    quad(P(-0.05, 0.135), P(0.85, 0.17), P(0.85, -0.17), P(-0.05, -0.135));
+    // 白衬衫袖子 + 卷边
+    var sg = ctx.createLinearGradient(wx + nx * 0.25 * u, wy + ny * 0.25 * u, wx - nx * 0.25 * u, wy - ny * 0.25 * u);
     sg.addColorStop(0, '#d9d9d2'); sg.addColorStop(0.4, '#ffffff'); sg.addColorStop(1, '#e3e3dc');
     ctx.fillStyle = sg;
-    ctx.beginPath(); ctx.moveTo(s1[0], s1[1]); ctx.lineTo(s2[0], s2[1]); ctx.lineTo(s3[0], s3[1]); ctx.lineTo(s4[0], s4[1]); ctx.closePath(); ctx.fill();
+    quad(P(0.8, 0.21), P(Lu + 1, 0.28), P(Lu + 1, -0.28), P(0.8, -0.21));
     ctx.strokeStyle = 'rgba(150,150,140,0.45)'; ctx.lineWidth = u * 0.012; ctx.lineCap = 'round';
     for (var f = 0; f < 4; f++) {
-      var fa = P(0.5 + f * 0.13, 0.15 - f * 0.05), fb = P(0.58 + f * 0.13, -0.05 - f * 0.04);
+      var fa = P(0.98 + f * 0.17, 0.17 - f * 0.05), fb = P(1.05 + f * 0.17, -0.06 - f * 0.04);
       ctx.beginPath(); ctx.moveTo(fa[0], fa[1]); ctx.quadraticCurveTo((fa[0] + fb[0]) / 2 + dx * u * 0.04, (fa[1] + fb[1]) / 2 + dy * u * 0.04, fb[0], fb[1]); ctx.stroke();
     }
-    // 卷边
-    var r1 = P(0.36, 0.23), r2 = P(0.46, 0.24), r3 = P(0.46, -0.24), r4 = P(0.36, -0.23);
     ctx.fillStyle = '#ecece4';
-    ctx.beginPath(); ctx.moveTo(r1[0], r1[1]); ctx.lineTo(r2[0], r2[1]); ctx.lineTo(r3[0], r3[1]); ctx.lineTo(r4[0], r4[1]); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = 'rgba(140,140,130,0.6)'; ctx.lineWidth = u * 0.01;
-    ctx.stroke();
+    quad(P(0.78, 0.23), P(0.92, 0.24), P(0.92, -0.24), P(0.78, -0.23));
+    ctx.strokeStyle = 'rgba(140,140,130,0.6)'; ctx.lineWidth = u * 0.01; ctx.stroke();
 
-    // 手掌 + 四指
-    ctx.save(); ctx.translate(hx, 0); ctx.rotate(pa); ctx.translate(0, HAND_DROP * u); ctx.scale(u * HS, u * HS);
-    ctx.fillStyle = skinGrad(-0.04, 0.2);
+  }
+
+  // 前景：手心朝上托住盘底，四根手指从前面往上扣住盘沿（看得到指甲），拇指扣左边
+  function drawHandFront() {
+    var u = PW;
+    ctx.save(); ctx.translate(G.hx, 0); ctx.rotate(palmAngle()); ctx.scale(u, u);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // 手掌 / 手腕
+    ctx.fillStyle = skinGrad(0.1, 0.45);
     ctx.beginPath();
-    ctx.moveTo(0.30, 0.0);
-    ctx.lineTo(-0.28, 0.0);
-    ctx.quadraticCurveTo(-0.37, 0.0, -0.40, -0.035);                 // 指尖微翘
-    ctx.quadraticCurveTo(-0.435, -0.02, -0.418, 0.03);
-    ctx.quadraticCurveTo(-0.34, 0.09, -0.12, 0.1);                   // 手指下沿
-    ctx.quadraticCurveTo(0.06, 0.15, 0.24, 0.185);                   // 掌根
-    ctx.lineTo(0.35, 0.22);
-    ctx.lineTo(0.39, 0.09);
-    ctx.quadraticCurveTo(0.37, 0.01, 0.30, 0.0);
+    ctx.moveTo(-0.24, 0.14);
+    ctx.lineTo(0.24, 0.14);
+    ctx.quadraticCurveTo(0.27, 0.3, 0.14, 0.43);
+    ctx.lineTo(-0.14, 0.43);
+    ctx.quadraticCurveTo(-0.27, 0.3, -0.24, 0.14);
     ctx.closePath(); ctx.fill();
-    // 下面几根手指的指尖层次
-    ctx.strokeStyle = 'rgba(150,85,50,0.45)'; ctx.lineWidth = 0.008;
-    ctx.beginPath(); ctx.moveTo(-0.405, 0.028); ctx.quadraticCurveTo(-0.33, 0.05, -0.22, 0.052); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(-0.39, 0.05); ctx.quadraticCurveTo(-0.3, 0.068, -0.2, 0.07); ctx.stroke();
-    // 指关节褶皱
-    ctx.lineWidth = 0.007;
-    for (var k = 0; k < 2; k++) {
-      var kx = -0.25 + k * 0.1;
-      ctx.beginPath(); ctx.moveTo(kx, 0.06 + k * 0.01); ctx.quadraticCurveTo(kx + 0.012, 0.075 + k * 0.01, kx + 0.004, 0.088 + k * 0.012); ctx.stroke();
+    ctx.strokeStyle = 'rgba(150,85,50,0.35)'; ctx.lineWidth = 0.008;
+    ctx.beginPath(); ctx.moveTo(-0.1, 0.39); ctx.quadraticCurveTo(0, 0.405, 0.1, 0.39); ctx.stroke();
+    // 拇指：从掌根往左上，指尖压在盘子左沿
+    ctx.fillStyle = skinGrad(-0.05, 0.32);
+    ctx.beginPath();
+    ctx.moveTo(-0.2, 0.34);
+    ctx.quadraticCurveTo(-0.4, 0.27, -0.45, 0.1);
+    ctx.quadraticCurveTo(-0.48, 0.0, -0.43, -0.02);
+    ctx.quadraticCurveTo(-0.37, -0.03, -0.36, 0.05);
+    ctx.quadraticCurveTo(-0.33, 0.17, -0.2, 0.2);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,226,216,0.95)';
+    ctx.save(); ctx.translate(-0.415, 0.02); ctx.rotate(0.25); rr(-0.025, -0.03, 0.05, 0.055, 0.022); ctx.fill(); ctx.restore();
+    ctx.strokeStyle = 'rgba(150,85,50,0.4)';
+    ctx.beginPath(); ctx.moveTo(-0.43, 0.13); ctx.quadraticCurveTo(-0.4, 0.14, -0.37, 0.12); ctx.stroke();
+    // 四指（中指最长）
+    var F = [[-0.165, 0.06], [-0.055, 0.03], [0.055, 0.04], [0.165, 0.075]];
+    for (var i = 0; i < 4; i++) {
+      var x = F[i][0], top = F[i][1], w = 0.054;
+      var g = ctx.createLinearGradient(x - w, 0, x + w, 0);
+      g.addColorStop(0, '#dba077'); g.addColorStop(0.45, '#f6cfa8'); g.addColorStop(1, '#d69a70');
+      ctx.fillStyle = g;
+      rr(x - w, top, w * 2, 0.3 - top, w); ctx.fill();
+      ctx.strokeStyle = 'rgba(140,75,45,0.4)'; ctx.lineWidth = 0.007;
+      ctx.stroke();
+      // 指甲
+      ctx.fillStyle = 'rgba(255,228,220,0.95)';
+      rr(x - w * 0.62, top + 0.012, w * 1.24, 0.055, w * 0.5); ctx.fill();
+      ctx.strokeStyle = 'rgba(200,140,120,0.5)'; ctx.lineWidth = 0.005; ctx.stroke();
+      // 指节纹
+      ctx.strokeStyle = 'rgba(150,85,50,0.35)'; ctx.lineWidth = 0.006;
+      ctx.beginPath(); ctx.moveTo(x - w * 0.5, top + 0.12); ctx.quadraticCurveTo(x, top + 0.135, x + w * 0.5, top + 0.12); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - w * 0.45, top + 0.2); ctx.quadraticCurveTo(x, top + 0.212, x + w * 0.45, top + 0.2); ctx.stroke();
     }
-    // 掌纹 / 掌根肉的高光
-    ctx.fillStyle = 'rgba(255,235,215,0.35)';
-    ellipse(0.12, 0.07, 0.12, 0.035); ctx.fill();
-    // 盘子压在手上的阴影
-    ctx.fillStyle = 'rgba(80,40,20,0.22)';
-    ellipse(-0.04, 0.012, 0.3, 0.018); ctx.fill();
     ctx.restore();
   }
 
-  // 拇指在盘子前面扣住（画在盘叠之后）
-  function drawThumb() {
-    var u = PW;
-    ctx.save(); ctx.translate(G.hx, 0); ctx.rotate(palmAngle()); ctx.translate(0, HAND_DROP * u); ctx.scale(u * HS, u * HS);
-    ctx.fillStyle = skinGrad(-0.1, 0.12);
-    ctx.beginPath();
-    ctx.moveTo(0.27, 0.08);
-    ctx.quadraticCurveTo(0.13, 0.04, 0.03, -0.05);
-    ctx.quadraticCurveTo(-0.01, -0.1, 0.04, -0.112);                // 指尖
-    ctx.quadraticCurveTo(0.1, -0.108, 0.135, -0.05);
-    ctx.quadraticCurveTo(0.2, 0.025, 0.33, 0.125);
-    ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = 'rgba(150,85,50,0.4)'; ctx.lineWidth = 0.007;
-    ctx.beginPath(); ctx.moveTo(0.13, 0.0); ctx.quadraticCurveTo(0.15, -0.012, 0.165, -0.002); ctx.stroke();
-    // 指甲
-    ctx.save(); ctx.translate(0.045, -0.083); ctx.rotate(-0.8);
-    ctx.fillStyle = 'rgba(255,225,215,0.9)';
-    ellipse(0, 0, 0.022, 0.012); ctx.fill();
+  // —— 头顶盘子：服务员张着胳膊保持平衡，眼睛盯着飞来的盘子 ——
+  function drawHead() {
+    var u = PW, hx = G.hx, pa = palmAngle(), vb = viewBounds();
+    var lean = G.state === 'play' ? G.lean : 0;
+    var NECK = 0.8;
+    var nx = hx - Math.sin(pa) * NECK * u, ny = Math.cos(pa) * NECK * u;
+    // 身体（不跟着头转）
+    ctx.save(); ctx.translate(nx, ny); ctx.scale(u, u);
+    var bot = (Math.max(vb.b, FLOOR) - ny) / u + 0.5;
+    // 胳膊：往两边张开，盘子往哪边歪，另一边的手就往下压
+    var k = clamp(lean, -0.5, 0.5) * 1.2, wob = Math.sin(G.t * 5) * 0.03;
+    for (var side = -1; side <= 1; side += 2) {
+      var sh = [side * 0.42, 0.18], el = [side * 0.78, 0.34 + side * k * 0.3], hd = [side * 1.0, 0.0 + side * k + wob * side];
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#f4f4ee'; ctx.lineWidth = 0.2;
+      ctx.beginPath(); ctx.moveTo(sh[0], sh[1]); ctx.lineTo(el[0], el[1]); ctx.stroke();
+      ctx.strokeStyle = '#e8b78d'; ctx.lineWidth = 0.13;
+      ctx.beginPath(); ctx.moveTo(el[0], el[1]); ctx.lineTo(hd[0], hd[1]); ctx.stroke();
+      ctx.strokeStyle = '#e6e6de'; ctx.lineWidth = 0.17;      // 卷起的袖口
+      ctx.beginPath(); ctx.moveTo(el[0] - side * 0.02, el[1] + 0.01); ctx.lineTo(el[0] + (hd[0] - el[0]) * 0.12, el[1] + (hd[1] - el[1]) * 0.12); ctx.stroke();
+      ctx.fillStyle = '#efc19a';
+      ellipse(hd[0] + side * 0.03, hd[1] - 0.03, 0.08, 0.1); ctx.fill();   // 张开的手
+      ctx.strokeStyle = '#efc19a'; ctx.lineWidth = 0.035;
+      for (var f = 0; f < 4; f++) {
+        var fa = -1.2 + f * 0.38, ang = side > 0 ? fa : Math.PI - fa;
+        ctx.beginPath(); ctx.moveTo(hd[0] + side * 0.03, hd[1] - 0.03);
+        ctx.lineTo(hd[0] + side * 0.03 + Math.cos(ang) * 0.13, hd[1] - 0.03 + Math.sin(ang) * 0.13); ctx.stroke();
+      }
+    }
+    // 衬衫 + 黑马甲
+    ctx.fillStyle = '#f7f7f2';
+    ctx.beginPath(); ctx.moveTo(-0.12, -0.02); ctx.lineTo(0.12, -0.02);
+    ctx.quadraticCurveTo(0.45, 0.06, 0.5, 0.25); ctx.lineTo(0.55, bot); ctx.lineTo(-0.55, bot); ctx.lineTo(-0.5, 0.25);
+    ctx.quadraticCurveTo(-0.45, 0.06, -0.12, -0.02); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#26262b';
+    ctx.beginPath(); ctx.moveTo(-0.3, 0.1); ctx.lineTo(-0.07, 0.45); ctx.lineTo(0, 0.62); ctx.lineTo(0.07, 0.45); ctx.lineTo(0.3, 0.1);
+    ctx.lineTo(0.42, 0.24); ctx.lineTo(0.47, bot); ctx.lineTo(-0.47, bot); ctx.lineTo(-0.42, 0.24); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#d4af37';
+    for (var bt = 0; bt < 3; bt++) { ellipse(0.045, 0.72 + bt * 0.17, 0.018, 0.018); ctx.fill(); }
+    // 脖子 + 领结
+    ctx.fillStyle = '#e3ad82';
+    rr(-0.09, -0.12, 0.18, 0.16, 0.05); ctx.fill();
+    ctx.fillStyle = '#c0392b';
+    ctx.beginPath(); ctx.moveTo(0, 0.05); ctx.lineTo(-0.11, -0.01); ctx.lineTo(-0.11, 0.11); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0, 0.05); ctx.lineTo(0.11, -0.01); ctx.lineTo(0.11, 0.11); ctx.closePath(); ctx.fill();
+    ellipse(0, 0.05, 0.03, 0.03); ctx.fill();
     ctx.restore();
+
+    // 头（跟着盘底一起歪）
+    ctx.save(); ctx.translate(hx, 0); ctx.rotate(pa); ctx.scale(u, u);
+    var hc = 0.43;
+    ctx.fillStyle = '#efc19a';
+    ellipse(-0.3, hc + 0.02, 0.05, 0.07); ctx.fill();
+    ellipse(0.3, hc + 0.02, 0.05, 0.07); ctx.fill();
+    var fg = ctx.createRadialGradient(-0.06, hc - 0.05, 0.05, 0, hc, 0.36);
+    fg.addColorStop(0, '#f8d5b0'); fg.addColorStop(1, '#e3a97c');
+    ctx.fillStyle = fg;
+    ellipse(0, hc, 0.29, 0.33); ctx.fill();
+    // 头发
+    ctx.fillStyle = '#2a1d17';
+    ctx.beginPath(); ctx.ellipse(0, hc - 0.01, 0.305, 0.345, 0, Math.PI, Math.PI * 2);
+    ctx.quadraticCurveTo(0.2, hc - 0.18, 0.02, hc - 0.13);
+    ctx.quadraticCurveTo(-0.16, hc - 0.1, -0.305, hc - 0.01);
+    ctx.closePath(); ctx.fill();
+    // 垫在头顶的红白毛巾圈
+    ctx.lineWidth = 0.075; ctx.strokeStyle = '#c0392b';
+    ellipse(0, 0.1, 0.24, 0.055); ctx.stroke();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 0.075; ctx.setLineDash([0.05, 0.07]);
+    ellipse(0, 0.1, 0.24, 0.055); ctx.stroke();
+    ctx.setLineDash([]);
+    // 眼睛：盯着最近的飞盘
+    var tx = 0, ty = -1, bd = 1e9;
+    for (var i = 0; i < G.flying.length; i++) {
+      var p = G.flying[i], ddx = p.x - hx, ddy = p.y - hc * u, d2 = ddx * ddx + ddy * ddy;
+      if (d2 < bd) { bd = d2; tx = ddx; ty = ddy; }
+    }
+    var cl = Math.cos(-pa), sl = Math.sin(-pa), lx2 = tx * cl - ty * sl, ly2 = tx * sl + ty * cl;
+    var ll = Math.sqrt(lx2 * lx2 + ly2 * ly2) || 1;
+    var px = lx2 / ll * 0.022, py = ly2 / ll * 0.018;
+    var worry = Math.min(1, Math.abs(lean) * 4);
+    for (var e = -1; e <= 1; e += 2) {
+      var ex2 = e * 0.11, ey2 = hc + 0.01;
+      ctx.fillStyle = '#ffffff'; ellipse(ex2, ey2, 0.055, 0.045 + worry * 0.012); ctx.fill();
+      ctx.fillStyle = '#2a1d17'; ellipse(ex2 + px, ey2 + py, 0.026, 0.026); ctx.fill();
+      ctx.fillStyle = '#ffffff'; ellipse(ex2 + px - 0.008, ey2 + py - 0.009, 0.007, 0.007); ctx.fill();
+      // 皱着的眉毛（内侧往上挑）
+      ctx.strokeStyle = '#2a1d17'; ctx.lineWidth = 0.022; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(e * 0.17, ey2 - 0.075); ctx.lineTo(e * 0.06, ey2 - 0.085 - 0.02 - worry * 0.03); ctx.stroke();
+    }
+    // 腮红、鼻子
+    ctx.fillStyle = 'rgba(230,110,90,0.25)';
+    ellipse(-0.18, hc + 0.12, 0.05, 0.03); ctx.fill(); ellipse(0.18, hc + 0.12, 0.05, 0.03); ctx.fill();
+    ctx.strokeStyle = 'rgba(150,85,50,0.6)'; ctx.lineWidth = 0.014;
+    ctx.beginPath(); ctx.moveTo(0, hc + 0.05); ctx.quadraticCurveTo(0.03, hc + 0.1, -0.005, hc + 0.11); ctx.stroke();
+    // 嘴：越歪越紧张
+    ctx.strokeStyle = '#7a2e22'; ctx.lineWidth = 0.018;
+    if (Math.abs(lean) > 0.2) {
+      ctx.fillStyle = '#7a2e22'; ellipse(0, hc + 0.19, 0.035, 0.045); ctx.fill();
+    } else if (Math.abs(lean) > 0.08) {
+      ctx.beginPath(); ctx.moveTo(-0.07, hc + 0.19);
+      ctx.quadraticCurveTo(-0.035, hc + 0.17, 0, hc + 0.19); ctx.quadraticCurveTo(0.035, hc + 0.21, 0.07, hc + 0.19); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.moveTo(-0.06, hc + 0.18); ctx.quadraticCurveTo(0, hc + 0.22, 0.06, hc + 0.18); ctx.stroke();
+    }
+    // 冒汗
+    if (Math.abs(lean) > 0.2) {
+      for (var sw = 0; sw < 2; sw++) {
+        var ph = (G.t * 1.4 + sw * 0.5) % 1, sx = (sw ? -1 : 1) * (0.27 + sw * 0.02), sy = hc - 0.12 + ph * 0.25;
+        ctx.globalAlpha = 1 - ph;
+        ctx.fillStyle = '#7fc8f8';
+        ctx.beginPath(); ctx.moveTo(sx, sy - 0.05); ctx.quadraticCurveTo(sx + 0.03, sy, sx, sy + 0.02); ctx.quadraticCurveTo(sx - 0.03, sy, sx, sy - 0.05); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
   }
 
@@ -953,18 +1072,25 @@
     text('稳住！', W / 2, cy, 46, '#ffd54a', 'center', 'bold', '#7a1f1f');
     text('别摔盘子', W / 2, cy + 56, 46, '#ffffff', 'center', 'bold', '#7a1f1f');
     var lines = [
-      '📱 左右倾斜手机，移动你的手',
+      '📱 左右倾斜手机，移动你的手（或头）',
       '🍽️ 盘子从四面八方飞过来，接住叠高',
       '⚖️ 叠得越高越晃，移动手去扶稳',
       '💥 倒了全碎……老板就在你身后'
     ];
     for (var i = 0; i < lines.length; i++) text(lines[i], W / 2, cy + 130 + i * 32, 16, '#fff3dc', 'center', 'normal');
-    var bw = 200, bh = 56, bx = W / 2 - bw / 2, by = H * 0.5 + 120;
-    var pulse = 1 + Math.sin(G.t * 4) * 0.04;
-    ctx.save(); ctx.translate(W / 2, by + bh / 2); ctx.scale(pulse, pulse);
-    rr(-bw / 2, -bh / 2, bw, bh, 28); ctx.fillStyle = '#e74c3c'; ctx.fill();
-    text('开始上班', 0, 1, 24, '#fff');
-    ctx.restore();
+    var bh = 56, gap = 16, bw = Math.min(160, (W - 40 - gap) / 2), by = H * 0.5 + 120;
+    var opts = [['hand', '用手托', '#e74c3c'], ['head', '用头顶', '#e67e22']];
+    text('选个姿势，开始上班', W / 2, by - 22, 16, '#ffd54a');
+    for (var k = 0; k < 2; k++) {
+      var bx = W / 2 - bw - gap / 2 + k * (bw + gap), o = opts[k];
+      var pulse = 1 + Math.sin(G.t * 4 + k * 1.6) * 0.035;
+      ctx.save(); ctx.translate(bx + bw / 2, by + bh / 2); ctx.scale(pulse, pulse);
+      rr(-bw / 2, -bh / 2, bw, bh, 28); ctx.fillStyle = o[2]; ctx.fill();
+      if (o[0] === mode) { ctx.strokeStyle = '#ffd54a'; ctx.lineWidth = 3; ctx.stroke(); }
+      text(o[1], 0, 1, 22, '#fff');
+      ctx.restore();
+      (function (m) { buttons.push({ x: bx, y: by, w: bw, h: bh, fn: function () { startGame(m); } }); })(o[0]);
+    }
     if (best) text('最高纪录：' + best + ' 个', W / 2, by + bh + 28, 15, '#ffd54a');
   }
 
@@ -1097,13 +1223,14 @@
   }
 
   function render() {
+    buttons = [];
     drawBackground();
     worldTransform();
     drawFloor();
     drawShards();
-    drawArmAndHand();
+    drawCarrier();
     if (G.state !== 'collapse' && G.state !== 'boss') { drawStack(); }
-    drawThumb();
+    drawCarrierFront();
     drawFlying();
     drawEdgeWarnings();
     if (G.state === 'title') drawTitle();
