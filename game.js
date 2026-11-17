@@ -169,7 +169,7 @@
       t: 0,
       hx: 0, hv: 0, ha: 0, prevHx: 0, prevHv: 0,
       theta: 0, omega: 0, lean: 0, beta: 0, betaV: 0, gf: input.gamma,
-      topX: 0, topY: 0, topA: 0,
+      topX: 0, topY: 0, topA: 0, wrist: 0, wristV: 0, pending: [],
       stack: [],
       flying: [], debris: [], shards: [], popups: [],
       lives: 3, broken: 0, caught: 0, perfect: 0,
@@ -189,7 +189,7 @@
   }
 
   // ================= 物理参数 =================
-  var GFALL = 1500;             // 统一重力：飞盘、碎片、盘叠都用它
+  var GFALL = 1150;             // 统一重力：飞盘、碎片、盘叠都用它
   var MU_S = 0.5, MU_K = 0.38;  // 盘与盘之间的静/动摩擦（盘沿嵌套，比较涩）
   var HAND_COUPLE = 0.35;       // 手部加速度传到盘叠的比例（游戏性折中）
   var N_CROSS = 15;             // 叠到大约这么多以后，光靠手托不住，要移动去扶
@@ -200,7 +200,7 @@
 
   // 每个盘子的世界角度 = 底部整体倾角 theta + 弯曲 beta（越往上越大）
   function computeShape() {
-    var n = G.stack.length, x = G.hx, y = 0, under = G.theta * 0.25;
+    var n = G.stack.length, x = G.hx, y = 0, under = palmAngle();
     for (var i = 0; i < n; i++) {
       var p = G.stack[i];
       var a = G.theta + G.beta * ((i + 1) / n);
@@ -214,6 +214,7 @@
     }
     G.topX = x; G.topY = y; G.topA = under;
   }
+  function palmAngle() { return G.theta * 0.3 + G.wrist; }
   function toTopLocal(wx, wy) {
     var dx = wx - G.topX, dy = wy - G.topY, c = Math.cos(G.topA), sn = Math.sin(G.topA);
     return { x: dx * c + dy * sn, y: -dx * sn + dy * c };
@@ -227,34 +228,50 @@
   }
 
   // ================= 发射盘子 =================
-  function spawnPlate() {
-    var n = G.stack.length;
-    var vb = viewBounds();
-    var r = rangeWorld();
-    var tx = clamp(G.hx + (Math.random() * 2 - 1) * PW * (0.6 + Math.min(n, 20) * 0.04), -r, r);
-    var ty = G.topY;
-    var side = Math.floor(Math.random() * 5); // 0左 1右 2上 3左下 4右下
-    var x0, y0, m = 40 / G.s;
-    var span = (vb.b - vb.t);
+  var SIDE_NAMES = ['左边', '右边', '上面', '左下角', '右下角'];
+  // 先在边缘预告约半秒，再真正扔出来
+  function planSpawn() {
+    var vb = viewBounds(), m = 40 / G.s, span = vb.b - vb.t, ty = G.topY;
+    var side = Math.floor(Math.random() * 5), x0, y0;
     if (side === 0) { x0 = vb.l - m; y0 = ty - Math.random() * span * 0.3; }
     else if (side === 1) { x0 = vb.r + m; y0 = ty - Math.random() * span * 0.3; }
-    else if (side === 2) { x0 = vb.l + Math.random() * (vb.r - vb.l); y0 = vb.t - m; }
+    else if (side === 2) { x0 = vb.l + PW * 0.6 + Math.random() * (vb.r - vb.l - PW * 1.2); y0 = vb.t - PW * 0.3; }
     else if (side === 3) { x0 = vb.l - m; y0 = Math.min(FLOOR, vb.b) - 10; }
     else { x0 = vb.r + m; y0 = Math.min(FLOOR, vb.b) - 10; }
+    G.pending.push({ side: side, x0: x0, y0: y0, t: 0.55 });
+  }
 
-    // 重力固定，靠飞行时间调整弧线；从下面扔上来的要保证最后是往下落
-    var T = Math.max(0.8, 1.35 - n * 0.015) + Math.random() * 0.3;
-    T = Math.max(T, Math.sqrt(2.6 * Math.max(0, y0 - ty) / GFALL));
-    var vx = (tx - x0) / T;
-    var vy = (ty - y0 - 0.5 * GFALL * T * T) / T;
+  function launch(pd) {
+    var n = G.stack.length, r = rangeWorld();
+    var tx = clamp(G.hx + (Math.random() * 2 - 1) * PW * (0.6 + Math.min(n, 20) * 0.04), -r, r);
+    var ty = G.topY, x0 = pd.x0, y0 = pd.y0, T, vy;
+    if (pd.side === 2) {
+      // 从顶上落：几乎是松手掉下来，不再先往上抛出屏幕
+      var vy0 = 40, d = Math.max(10, ty - y0);
+      T = (-vy0 + Math.sqrt(vy0 * vy0 + 2 * GFALL * d)) / GFALL;
+      vy = vy0;
+    } else {
+      T = Math.max(0.85, 1.4 - n * 0.015) + Math.random() * 0.3;
+      T = Math.max(T, Math.sqrt(2.6 * Math.max(0, y0 - ty) / GFALL));
+      vy = (ty - y0 - 0.5 * GFALL * T * T) / T;
+    }
     G.flying.push({
-      x: x0, y: y0, vx: vx, vy: vy,
-      rot: Math.random() * 6, vr: (Math.random() < 0.5 ? -1 : 1) * (6 + Math.random() * 8),
+      x: x0, y: y0, vx: (tx - x0) / T, vy: vy,
+      rot: Math.random() * 6, vr: (Math.random() < 0.5 ? -1 : 1) * (pd.side === 2 ? 2 + Math.random() * 3 : 6 + Math.random() * 8),
       style: PLATE_STYLES[Math.floor(Math.random() * PLATE_STYLES.length)],
-      side: ['左边', '右边', '上面', '左下角', '右下角'][side],
+      side: SIDE_NAMES[pd.side],
       prevLy: toTopLocal(x0, y0).y, alive: true
     });
     sfx.whoosh();
+  }
+
+  function updatePending(dt) {
+    for (var i = 0; i < G.pending.length; i++) {
+      var pd = G.pending[i];
+      pd.t -= dt;
+      if (pd.t <= 0) { launch(pd); pd.done = true; }
+    }
+    G.pending = G.pending.filter(function (p) { return !p.done; });
   }
 
   // ================= 更新 =================
@@ -279,6 +296,10 @@
     var a = (v - G.hv) / dt;
     G.hv = v;
     G.ha += (clamp(a, -2500, 2500) - G.ha) * Math.min(1, dt * 15);
+    // 手腕：手往右加速时手掌会稍微往左压（惯性滞后），带一点回弹
+    var wT = clamp(-G.ha * 0.00005, -0.12, 0.12);
+    G.wristV += ((wT - G.wrist) * 160 - G.wristV * 14) * dt;
+    G.wrist += G.wristV * dt;
   }
 
   function updateStack(dt) {
@@ -503,11 +524,12 @@
     if (G.state === 'play') {
       updateHand(dt);
       updateStack(dt);
+      updatePending(dt);
       G.spawnT -= dt;
       if (G.spawnT <= 0) {
         var n = G.stack.length;
-        spawnPlate();
-        if (n >= 12 && Math.random() < Math.min(0.35, (n - 10) * 0.02)) spawnPlate();
+        planSpawn();
+        if (n >= 12 && Math.random() < Math.min(0.35, (n - 10) * 0.02)) planSpawn();
         G.spawnT = Math.max(0.75, 2.0 - n * 0.045) + Math.random() * 0.4;
       }
     }
@@ -643,7 +665,7 @@
   }
   function ellipse(x, y, rx, ry) {
     ctx.beginPath();
-    if (ctx.ellipse) ctx.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), 0, 0, Math.PI * 2);
+    if (ctx.ellipse) ctx.ellipse(x, y, Math.max(0.0001, rx), Math.max(0.0001, ry), 0, 0, Math.PI * 2);
     else { ctx.save(); ctx.translate(x, y); ctx.scale(rx, ry); ctx.arc(0, 0, 1, 0, Math.PI * 2); ctx.restore(); }
   }
   function text(str, x, y, size, color, align, weight, stroke) {
@@ -723,31 +745,104 @@
     ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(vb.l - 50, FLOOR, vb.r - vb.l + 100, 6);
   }
 
+  // 侧面托盘的手：四指朝左平伸、指尖微翘，拇指在前面扣住最下面的盘子
+  var HAND_DROP = 0.11, HS = 1.35;   // 手的下移量、放大倍数（以盘宽为单位）
+  function skinGrad(y0, y1) {
+    var g = ctx.createLinearGradient(0, y0, 0, y1);
+    g.addColorStop(0, '#f8d5b0'); g.addColorStop(0.55, '#eab68a'); g.addColorStop(1, '#c9875a');
+    return g;
+  }
+
   function drawArmAndHand() {
-    var hx = G.hx, py = 0;
+    var u = PW, hx = G.hx, pa = palmAngle();
     var vb = viewBounds();
-    // 袖子（从屏幕底部伸出）
-    var baseX = hx * 0.55, baseY = vb.b + 20;
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = PW * 0.34;
-    ctx.beginPath(); ctx.moveTo(baseX, baseY); ctx.lineTo(hx, py + PW * 0.32); ctx.stroke();
-    ctx.strokeStyle = '#e6e6e6'; ctx.lineWidth = PW * 0.05;
-    ctx.beginPath(); ctx.moveTo(baseX + PW * 0.08, baseY); ctx.lineTo(hx + PW * 0.08, py + PW * 0.34); ctx.stroke();
-    // 袖口
-    ctx.fillStyle = '#222';
-    ctx.save(); ctx.translate(hx, py + PW * 0.28); ctx.rotate(Math.atan2(baseX - hx, baseY - py) * -1);
-    rr(-PW * 0.19, -PW * 0.03, PW * 0.38, PW * 0.08, 4); ctx.fill(); ctx.restore();
-    // 手掌（托盘姿势）
-    ctx.save(); ctx.translate(hx, py); ctx.rotate(G.theta * 0.25);
-    ctx.fillStyle = '#f1c27d';
-    rr(-PW * 0.36, 0, PW * 0.72, PW * 0.14, PW * 0.07); ctx.fill();
-    ellipse(0, PW * 0.17, PW * 0.16, PW * 0.12); ctx.fill();
-    // 手指
-    ctx.fillStyle = '#e8b56c';
-    for (var i = 0; i < 4; i++) { ellipse(-PW * 0.33 + i * 0.03 * PW, PW * 0.03 + i * PW * 0.025, PW * 0.06, PW * 0.04); ctx.fill(); }
-    ctx.fillStyle = '#f1c27d';
-    ellipse(PW * 0.34, PW * 0.02, PW * 0.06, PW * 0.05); ctx.fill(); // 拇指
+    var c = Math.cos(pa), sn = Math.sin(pa);
+    // 手腕（手掌坐标 0.34u, 0.13u 处）的世界坐标
+    var lx = 0.36 * HS * u, ly = (0.15 * HS + HAND_DROP) * u;
+    var wx = hx + lx * c - ly * sn, wy = lx * sn + ly * c;
+    // 肘部在屏幕下方偏右，随手移动一点点（像真人手臂绕肘转）
+    var ex = hx * 0.35 + u * 0.95, ey = Math.max(vb.b, FLOOR) + u * 0.5;
+    var dx = ex - wx, dy = ey - wy, L = Math.sqrt(dx * dx + dy * dy) || 1;
+    dx /= L; dy /= L;
+    var nx = -dy, ny = dx;
+    function P(t, w) { return [wx + dx * L * t + nx * w * u, wy + dy * L * t + ny * w * u]; }
+
+    // 小臂（皮肤）
+    var a1 = P(0, 0.12), a2 = P(0.42, 0.165), a3 = P(0.42, -0.165), a4 = P(0, -0.12);
+    var g = ctx.createLinearGradient(wx + nx * 0.16 * u, wy + ny * 0.16 * u, wx - nx * 0.16 * u, wy - ny * 0.16 * u);
+    g.addColorStop(0, '#c9875a'); g.addColorStop(0.45, '#f2c49c'); g.addColorStop(1, '#d99a6c');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(a1[0], a1[1]); ctx.lineTo(a2[0], a2[1]); ctx.lineTo(a3[0], a3[1]); ctx.lineTo(a4[0], a4[1]); ctx.closePath(); ctx.fill();
+
+    // 挽起来的白衬衫袖子
+    var s1 = P(0.38, 0.21), s2 = P(1.2, 0.29), s3 = P(1.2, -0.29), s4 = P(0.38, -0.21);
+    var sg = ctx.createLinearGradient(s1[0], s1[1], s4[0], s4[1]);
+    sg.addColorStop(0, '#d9d9d2'); sg.addColorStop(0.4, '#ffffff'); sg.addColorStop(1, '#e3e3dc');
+    ctx.fillStyle = sg;
+    ctx.beginPath(); ctx.moveTo(s1[0], s1[1]); ctx.lineTo(s2[0], s2[1]); ctx.lineTo(s3[0], s3[1]); ctx.lineTo(s4[0], s4[1]); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(150,150,140,0.45)'; ctx.lineWidth = u * 0.012; ctx.lineCap = 'round';
+    for (var f = 0; f < 4; f++) {
+      var fa = P(0.5 + f * 0.13, 0.15 - f * 0.05), fb = P(0.58 + f * 0.13, -0.05 - f * 0.04);
+      ctx.beginPath(); ctx.moveTo(fa[0], fa[1]); ctx.quadraticCurveTo((fa[0] + fb[0]) / 2 + dx * u * 0.04, (fa[1] + fb[1]) / 2 + dy * u * 0.04, fb[0], fb[1]); ctx.stroke();
+    }
+    // 卷边
+    var r1 = P(0.36, 0.23), r2 = P(0.46, 0.24), r3 = P(0.46, -0.24), r4 = P(0.36, -0.23);
+    ctx.fillStyle = '#ecece4';
+    ctx.beginPath(); ctx.moveTo(r1[0], r1[1]); ctx.lineTo(r2[0], r2[1]); ctx.lineTo(r3[0], r3[1]); ctx.lineTo(r4[0], r4[1]); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(140,140,130,0.6)'; ctx.lineWidth = u * 0.01;
+    ctx.stroke();
+
+    // 手掌 + 四指
+    ctx.save(); ctx.translate(hx, 0); ctx.rotate(pa); ctx.translate(0, HAND_DROP * u); ctx.scale(u * HS, u * HS);
+    ctx.fillStyle = skinGrad(-0.04, 0.2);
+    ctx.beginPath();
+    ctx.moveTo(0.30, 0.0);
+    ctx.lineTo(-0.28, 0.0);
+    ctx.quadraticCurveTo(-0.37, 0.0, -0.40, -0.035);                 // 指尖微翘
+    ctx.quadraticCurveTo(-0.435, -0.02, -0.418, 0.03);
+    ctx.quadraticCurveTo(-0.34, 0.09, -0.12, 0.1);                   // 手指下沿
+    ctx.quadraticCurveTo(0.06, 0.15, 0.24, 0.185);                   // 掌根
+    ctx.lineTo(0.35, 0.22);
+    ctx.lineTo(0.39, 0.09);
+    ctx.quadraticCurveTo(0.37, 0.01, 0.30, 0.0);
+    ctx.closePath(); ctx.fill();
+    // 下面几根手指的指尖层次
+    ctx.strokeStyle = 'rgba(150,85,50,0.45)'; ctx.lineWidth = 0.008;
+    ctx.beginPath(); ctx.moveTo(-0.405, 0.028); ctx.quadraticCurveTo(-0.33, 0.05, -0.22, 0.052); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-0.39, 0.05); ctx.quadraticCurveTo(-0.3, 0.068, -0.2, 0.07); ctx.stroke();
+    // 指关节褶皱
+    ctx.lineWidth = 0.007;
+    for (var k = 0; k < 2; k++) {
+      var kx = -0.25 + k * 0.1;
+      ctx.beginPath(); ctx.moveTo(kx, 0.06 + k * 0.01); ctx.quadraticCurveTo(kx + 0.012, 0.075 + k * 0.01, kx + 0.004, 0.088 + k * 0.012); ctx.stroke();
+    }
+    // 掌纹 / 掌根肉的高光
+    ctx.fillStyle = 'rgba(255,235,215,0.35)';
+    ellipse(0.12, 0.07, 0.12, 0.035); ctx.fill();
+    // 盘子压在手上的阴影
+    ctx.fillStyle = 'rgba(80,40,20,0.22)';
+    ellipse(-0.04, 0.012, 0.3, 0.018); ctx.fill();
+    ctx.restore();
+  }
+
+  // 拇指在盘子前面扣住（画在盘叠之后）
+  function drawThumb() {
+    var u = PW;
+    ctx.save(); ctx.translate(G.hx, 0); ctx.rotate(palmAngle()); ctx.translate(0, HAND_DROP * u); ctx.scale(u * HS, u * HS);
+    ctx.fillStyle = skinGrad(-0.1, 0.12);
+    ctx.beginPath();
+    ctx.moveTo(0.27, 0.08);
+    ctx.quadraticCurveTo(0.13, 0.04, 0.03, -0.05);
+    ctx.quadraticCurveTo(-0.01, -0.1, 0.04, -0.112);                // 指尖
+    ctx.quadraticCurveTo(0.1, -0.108, 0.135, -0.05);
+    ctx.quadraticCurveTo(0.2, 0.025, 0.33, 0.125);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(150,85,50,0.4)'; ctx.lineWidth = 0.007;
+    ctx.beginPath(); ctx.moveTo(0.13, 0.0); ctx.quadraticCurveTo(0.15, -0.012, 0.165, -0.002); ctx.stroke();
+    // 指甲
+    ctx.save(); ctx.translate(0.045, -0.083); ctx.rotate(-0.8);
+    ctx.fillStyle = 'rgba(255,225,215,0.9)';
+    ellipse(0, 0, 0.022, 0.012); ctx.fill();
     ctx.restore();
     ctx.restore();
   }
@@ -795,6 +890,16 @@
   function drawEdgeWarnings() {
     // 屏幕外盘子的方向提示
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    if (G.state === 'play') for (var q = 0; q < G.pending.length; q++) {
+      var pd = G.pending[q], ps = toScreen({ x: pd.x0, y: pd.y0 });
+      var px = clamp(ps.x, 22, W - 22), py = clamp(ps.y, 120, H - 22);
+      var ang = pd.side === 0 ? 0 : pd.side === 1 ? Math.PI : pd.side === 2 ? Math.PI / 2 : pd.side === 3 ? -Math.PI / 4 : -Math.PI * 3 / 4;
+      var al = 0.55 + 0.45 * Math.sin(G.t * 22);
+      ctx.save(); ctx.translate(px, py); ctx.rotate(ang);
+      ctx.fillStyle = 'rgba(230,60,40,' + al + ')';
+      ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(-6, -12); ctx.lineTo(-1, 0); ctx.lineTo(-6, 12); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
     for (var i = 0; i < G.flying.length; i++) {
       var sp = toScreen(G.flying[i]);
       if (sp.x > 0 && sp.x < W && sp.y > 0 && sp.y < H) continue;
@@ -998,6 +1103,7 @@
     drawShards();
     drawArmAndHand();
     if (G.state !== 'collapse' && G.state !== 'boss') { drawStack(); }
+    drawThumb();
     drawFlying();
     drawEdgeWarnings();
     if (G.state === 'title') drawTitle();
