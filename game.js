@@ -143,7 +143,6 @@
   }
 
   // ================= 常量 & 布局 =================
-  var GRAV = 900;           // 盘子叠的“重力”(px/s²)，用于倒立摆
   var PW, PH, HAND_SY, FLOOR;
   function layout() {
     PW = Math.min(W * 0.30, 130);
@@ -169,7 +168,8 @@
       state: 'title',
       t: 0,
       hx: 0, hv: 0, ha: 0, prevHx: 0, prevHv: 0,
-      theta: 0, omega: 0, lean: 0,
+      theta: 0, omega: 0, lean: 0, beta: 0, betaV: 0, gf: input.gamma,
+      topX: 0, topY: 0, topA: 0,
       stack: [],
       flying: [], debris: [], shards: [], popups: [],
       lives: 3, broken: 0, caught: 0, perfect: 0,
@@ -188,19 +188,35 @@
     input.gammaZero = input.gamma;  // 以当前姿势为“水平”
   }
 
-  // ================= 坐标 =================
+  // ================= 物理参数 =================
+  var GFALL = 1500;             // 统一重力：飞盘、碎片、盘叠都用它
+  var MU_S = 0.5, MU_K = 0.38;  // 盘与盘之间的静/动摩擦（盘沿嵌套，比较涩）
+  var HAND_COUPLE = 0.35;       // 手部加速度传到盘叠的比例（游戏性折中）
+  var N_CROSS = 15;             // 叠到大约这么多以后，光靠手托不住，要移动去扶
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+
+  // ================= 坐标 / 盘叠形状 =================
   function rangeWorld() { return (W * 0.5 - PW * 0.6 * G.s) / G.s; }
-  function stackTopLocal() {
-    var n = G.stack.length;
-    return { x: n ? G.stack[n - 1].off : 0, y: -n * PH };
+
+  // 每个盘子的世界角度 = 底部整体倾角 theta + 弯曲 beta（越往上越大）
+  function computeShape() {
+    var n = G.stack.length, x = G.hx, y = 0, under = G.theta * 0.25;
+    for (var i = 0; i < n; i++) {
+      var p = G.stack[i];
+      var a = G.theta + G.beta * ((i + 1) / n);
+      var cu = Math.cos(under), su = Math.sin(under);
+      x += p.rel * cu; y += p.rel * su;           // 沿下面那层表面的偏移
+      var c = Math.cos(a), sn = Math.sin(a);
+      p.a = a; p.under = under;
+      p.cx = x + PH * 0.5 * sn; p.cy = y - PH * 0.5 * c;
+      x += PH * sn; y -= PH * c;
+      under = a;
+    }
+    G.topX = x; G.topY = y; G.topA = under;
   }
-  function localToWorld(lx, ly) {
-    var c = Math.cos(G.theta), s = Math.sin(G.theta);
-    return { x: G.hx + lx * c - ly * s, y: lx * s + ly * c };
-  }
-  function worldToLocal(wx, wy) {
-    var dx = wx - G.hx, dy = wy, c = Math.cos(G.theta), s = Math.sin(G.theta);
-    return { x: dx * c + dy * s, y: -dx * s + dy * c };
+  function toTopLocal(wx, wy) {
+    var dx = wx - G.topX, dy = wy - G.topY, c = Math.cos(G.topA), sn = Math.sin(G.topA);
+    return { x: dx * c + dy * sn, y: -dx * sn + dy * c };
   }
   function viewBounds() {
     var s = G.s;
@@ -214,30 +230,29 @@
   function spawnPlate() {
     var n = G.stack.length;
     var vb = viewBounds();
-    var top = localToWorld(stackTopLocal().x, stackTopLocal().y);
-    // 目标：叠顶附近随机偏移，逼玩家移动
     var r = rangeWorld();
-    var tx = Math.max(-r, Math.min(r, G.hx + (Math.random() * 2 - 1) * PW * (0.6 + Math.min(n, 20) * 0.04)));
-    var ty = top.y;
+    var tx = clamp(G.hx + (Math.random() * 2 - 1) * PW * (0.6 + Math.min(n, 20) * 0.04), -r, r);
+    var ty = G.topY;
     var side = Math.floor(Math.random() * 5); // 0左 1右 2上 3左下 4右下
     var x0, y0, m = 40 / G.s;
     var span = (vb.b - vb.t);
-    if (side === 0) { x0 = vb.l - m; y0 = ty - Math.random() * span * 0.35; }
-    else if (side === 1) { x0 = vb.r + m; y0 = ty - Math.random() * span * 0.35; }
+    if (side === 0) { x0 = vb.l - m; y0 = ty - Math.random() * span * 0.3; }
+    else if (side === 1) { x0 = vb.r + m; y0 = ty - Math.random() * span * 0.3; }
     else if (side === 2) { x0 = vb.l + Math.random() * (vb.r - vb.l); y0 = vb.t - m; }
     else if (side === 3) { x0 = vb.l - m; y0 = Math.min(FLOOR, vb.b) - 10; }
     else { x0 = vb.r + m; y0 = Math.min(FLOOR, vb.b) - 10; }
 
-    var T = Math.max(0.85, 1.55 - n * 0.018) + Math.random() * 0.35;
-    var g = Math.max(700, 2.4 * (y0 - ty) / (T * T));
+    // 重力固定，靠飞行时间调整弧线；从下面扔上来的要保证最后是往下落
+    var T = Math.max(0.8, 1.35 - n * 0.015) + Math.random() * 0.3;
+    T = Math.max(T, Math.sqrt(2.6 * Math.max(0, y0 - ty) / GFALL));
     var vx = (tx - x0) / T;
-    var vy = (ty - y0 - 0.5 * g * T * T) / T;
+    var vy = (ty - y0 - 0.5 * GFALL * T * T) / T;
     G.flying.push({
-      x: x0, y: y0, vx: vx, vy: vy, g: g,
+      x: x0, y: y0, vx: vx, vy: vy,
       rot: Math.random() * 6, vr: (Math.random() < 0.5 ? -1 : 1) * (6 + Math.random() * 8),
       style: PLATE_STYLES[Math.floor(Math.random() * PLATE_STYLES.length)],
       side: ['左边', '右边', '上面', '左下角', '右下角'][side],
-      prevLy: worldToLocal(x0, y0).y, alive: true
+      prevLy: toTopLocal(x0, y0).y, alive: true
     });
     sfx.whoosh();
   }
@@ -246,68 +261,120 @@
   function updateHand(dt) {
     var r = rangeWorld();
     var target = G.hx;
+    // 陀螺仪读数先滤波，去掉手抖
+    G.gf += (input.gamma - G.gf) * Math.min(1, dt * 20);
     if (input.touching && G.state === 'play') {
       target = (input.touchX - W / 2) / G.s;
     } else if (input.keys) {
-      target = G.hx + input.keys * 700 * dt / G.s;
+      target = G.hx + input.keys * 900 * dt / G.s;
     } else if (input.hasTilt) {
-      var d = input.gamma - input.gammaZero;
-      // 死区 3°，倾斜 40° 才到边
-      d = Math.abs(d) < 3 ? 0 : d - (d > 0 ? 3 : -3);
-      target = Math.max(-1, Math.min(1, d / 40)) * r;
+      var d = G.gf - input.gammaZero;
+      d = Math.abs(d) < 2 ? 0 : d - (d > 0 ? 2 : -2);   // 2° 死区
+      target = clamp(d / 28, -1, 1) * r;                  // 倾斜约 30° 到边
     }
-    target = Math.max(-r, Math.min(r, target));
+    target = clamp(target, -r, r);
     G.prevHx = G.hx;
-    G.hx += (target - G.hx) * Math.min(1, dt * (input.touching ? 8 : 5.5));
+    G.hx += (target - G.hx) * Math.min(1, dt * (input.touching ? 18 : 12));
     var v = (G.hx - G.prevHx) / dt;
     var a = (v - G.hv) / dt;
     G.hv = v;
-    G.ha += (Math.max(-2000, Math.min(2000, a)) - G.ha) * Math.min(1, dt * 18);
+    G.ha += (clamp(a, -2500, 2500) - G.ha) * Math.min(1, dt * 15);
   }
 
   function updateStack(dt) {
     var n = G.stack.length;
-    if (!n) { G.theta = 0; G.omega = 0; G.lean = 0; return; }
-    var com = 0;
-    for (var i = 0; i < n; i++) com += G.stack[i].off;
-    com /= n;
-    var L = n * PH / 2 + 22;
-    var steps = 3, h = dt / steps;
+    if (!n) { G.theta = G.omega = G.beta = G.betaV = G.lean = 0; computeShape(); return; }
+    var steps = 4, h = dt / steps;
+    var Kg = GFALL * PH * N_CROSS * N_CROSS / 2;   // 手掌能提供的扶正力矩（每弧度）
     for (var k = 0; k < steps; k++) {
-      var lean = G.theta + (com / (PW * 0.5)) * 0.28 * Math.min(1, n / 8); // 偏心：盘子越多越要命
-      var gl = GRAV / L;
-      var grip = gl * Math.max(0.5, 1.6 - n * 0.04);    // 手的“扶稳力”，越高越弱
-      var damp = 2 * Math.sqrt(gl) * 0.35;
-      var handK = 0.5 * Math.min(1, 0.25 + n / 20) / (L + 150); // 盘子越多，手一动越晃
-      var alpha = gl * Math.sin(lean) - grip * G.theta - damp * G.omega - G.ha * handK;
-      G.omega += alpha * h;
+      computeShape();
+      // 绕手掌的刚体：重力力矩 + 手加速度的惯性力矩 + 手的扶正
+      var sx = 0, sh = 0, I = 0;
+      for (var i = 0; i < n; i++) {
+        var p = G.stack[i], rx = p.cx - G.hx, ry = -p.cy;
+        sx += rx; sh += ry; I += rx * rx + ry * ry;
+      }
+      I += n * PW * PW / 16;
+      var stiff = Math.max(Kg - GFALL * sh, Kg * 0.08);
+      var damp = 2 * 0.3 * Math.sqrt(stiff * I);
+      var torque = GFALL * sx - HAND_COUPLE * G.ha * sh * Math.cos(G.theta) - Kg * G.theta - damp * G.omega;
+      G.omega += torque / I * h;
       G.theta += G.omega * h;
-      G.lean = lean;
+      // 弯曲：高叠像软塔，手一动顶部滞后甩动
+      var wb = 18 / (1 + n * 0.07);
+      G.betaV += (-wb * wb * G.beta - 2 * 0.16 * wb * G.betaV - G.ha * HAND_COUPLE * 0.006 * Math.min(1, n / 6)) * h;
+      G.beta = clamp(G.beta + G.betaV * h, -0.4, 0.4);
+      if (slidePlates(h)) return;
     }
-    var limit = 0.62;
-    if (Math.abs(G.lean) > limit || Math.abs(G.theta) > limit) {
+    computeShape();
+    G.lean = G.theta + G.beta * 0.5;
+    if (Math.abs(G.theta) > 0.6) {
       collapse('lean');
-    } else if (Math.abs(G.lean) > 0.32) {
+    } else if (Math.abs(G.lean) > 0.28) {
       G.warnT += dt;
       if (G.warnT > 0.35) { G.warnT = 0; sfx.warn(); }
     }
+  }
+
+  // 摩擦滑动：盘面太斜或手猛地一动，上面的盘子会滑；滑出边就掉
+  function slidePlates(h) {
+    var n = G.stack.length;
+    for (var i = 0; i < n; i++) {
+      var p = G.stack[i], a = p.under;
+      var lat = GFALL * Math.sin(a) - HAND_COUPLE * G.ha * Math.cos(a);
+      var nor = GFALL * Math.cos(a);
+      if (p.sv === 0) {
+        if (Math.abs(lat) > MU_S * nor) p.sv = 1e-6 * Math.sign(lat);
+      }
+      if (p.sv !== 0) {
+        var dir = Math.sign(p.sv);
+        var nv = p.sv + (lat - dir * MU_K * nor) * h;
+        if (Math.sign(nv) !== dir && Math.abs(lat) <= MU_S * nor) nv = 0;
+        p.sv = nv;
+        p.rel += p.sv * h;
+      }
+      var edge = i === 0 ? PW * 0.6 : PW * 0.5;
+      if (Math.abs(p.rel) > edge) { slideOff(i); return true; }
+    }
+    return false;
+  }
+
+  function plateToDebris(p, extraVx) {
+    var rx = p.cx - G.hx, ry = p.cy;
+    return {
+      x: p.cx, y: p.cy,
+      vx: G.hv - G.omega * ry + (p.sv || 0) + (extraVx || 0),
+      vy: G.omega * rx,
+      rot: p.a, vr: G.omega * 0.8 + (Math.random() - 0.5) * 3 + Math.sign(p.sv || G.omega) * 2,
+      style: p.style
+    };
+  }
+
+  function slideOff(i) {
+    computeShape();
+    if (i === 0) { collapse('lean'); return; }
+    var cnt = G.stack.length - i;
+    for (var k = i; k < G.stack.length; k++) G.debris.push(plateToDebris(G.stack[k], (Math.random() - 0.5) * 40));
+    G.stack.length = i;
+    G.lives--;
+    G.shake = 8;
+    vibrate(true);
+    popup(cnt > 1 ? '上面' + cnt + '个滑下去了！' : '最上面那个滑掉了！', W / 2, H * 0.32, '#ff7b6b', 22);
+    if (G.lives <= 0) collapse('miss');
   }
 
   function updateFlying(dt) {
     for (var i = 0; i < G.flying.length; i++) {
       var p = G.flying[i];
       if (!p.alive) continue;
-      p.vy += p.g * dt;
+      p.vy += GFALL * dt;
       p.x += p.vx * dt; p.y += p.vy * dt;
       p.rot += p.vr * dt;
       if (G.state === 'play') {
-        var loc = worldToLocal(p.x, p.y);
-        var top = stackTopLocal();
-        if (p.prevLy < top.y && loc.y >= top.y && p.vy > 0) {
-          var n = G.stack.length;
-          var tol = n ? PW * 0.5 : PW * 0.62;
-          var d = loc.x - top.x;
-          if (Math.abs(d) < tol) { land(p, loc.x, d); continue; }
+        var loc = toTopLocal(p.x, p.y);
+        if (p.prevLy < 0 && loc.y >= 0 && p.vy > 0) {
+          var tol = G.stack.length ? PW * 0.4 : PW * 0.45;
+          if (Math.abs(loc.x) < tol) { land(p, loc.x); continue; }
         }
         p.prevLy = loc.y;
       }
@@ -320,18 +387,25 @@
     G.flying = G.flying.filter(function (p) { return p.alive; });
   }
 
-  function land(p, lx, d) {
+  function land(p, lx) {
     p.alive = false;
     var n = G.stack.length;
-    G.stack.push({ off: lx, style: p.style });
+    var c = Math.cos(G.topA), sn = Math.sin(G.topA);
+    var vAlong = p.vx * c + p.vy * sn;                  // 沿盘面的速度 → 落上去会滑一小段
+    var hTop = -G.topY, rxTop = G.topX - G.hx;
+    G.stack.push({ rel: lx, style: p.style, sv: clamp(vAlong * 0.22, -140, 140) || 0, bounce: -PH * 0.9, bv: 0 });
     G.caught++;
-    var perfect = Math.abs(d) < PW * 0.08;
-    // 冲击：横向速度 + 偏心
-    G.omega += (p.vx * 0.0009 + d * 0.004) / (1 + n * 0.04);
-    if (perfect) { G.perfect++; G.omega *= 0.4; G.theta *= 0.7; }
+    var perfect = Math.abs(lx) < PW * 0.08;
+    // 角动量冲击：砸在越高的地方，叠子晃得越厉害（一部分被手掌吸收）
+    var I = 0; computeShape();
+    for (var i = 0; i < G.stack.length; i++) { var q = G.stack[i], rx = q.cx - G.hx; I += rx * rx + q.cy * q.cy; }
+    I += G.stack.length * PW * PW / 16;
+    G.omega += 0.45 * (p.vx * hTop + p.vy * rxTop) / I;
+    G.betaV += p.vx * 0.0012 / (1 + n * 0.05);
+    if (perfect) { G.perfect++; G.stack[n].sv = 0; }
     sfx.catch(perfect);
     vibrate(false);
-    var tp = toScreen(localToWorld(lx, -(n + 1) * PH));
+    var tp = toScreen({ x: G.topX, y: G.topY });
     popup(perfect ? '完美！' : '+1', tp.x, tp.y - 10, perfect ? '#ffd54a' : '#ffffff', perfect ? 26 : 20);
     if (G.stack.length > best) { best = G.stack.length; store('plate_best', String(best)); }
   }
@@ -349,26 +423,16 @@
     if (G.state !== 'play') return;
     G.state = 'collapse';
     G.reason = reason;
+    computeShape();
     G.topStyle = G.stack.length ? G.stack[G.stack.length - 1].style : null;
     G.tipDir = (G.lean || G.theta) > 0 ? '右' : '左';
-    G.peak = G.stack.length;
     G.collapseT = 0;
-    var dir = G.theta === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(G.lean || G.theta);
-    for (var i = 0; i < G.stack.length; i++) {
-      var pl = G.stack[i];
-      var ly = -(i + 0.5) * PH;
-      var w = localToWorld(pl.off, ly);
-      var rx = w.x - G.hx, ry = w.y;
-      G.debris.push({
-        x: w.x, y: w.y,
-        vx: G.hv * 0.5 - G.omega * ry + dir * (80 + i * 9 + Math.random() * 90),
-        vy: G.omega * rx - Math.random() * 160 - i * 3,
-        rot: G.theta, vr: dir * (2 + Math.random() * 6),
-        style: pl.style, delay: Math.random() * 0.05 * i
-      });
-    }
+    // 倒下时保持当前的转动，越往上甩得越远；再给一点继续倒的趋势
+    var dir = Math.sign(G.theta || G.lean || (Math.random() - 0.5));
+    G.omega += dir * 1.2;
+    for (var i = 0; i < G.stack.length; i++) G.debris.push(plateToDebris(G.stack[i], dir * Math.random() * 30));
     G.stack = [];
-    G.theta = 0; G.omega = 0;
+    G.theta = G.omega = G.beta = G.betaV = 0;
     vibrate(true);
   }
 
@@ -395,24 +459,32 @@
   function updateDebris(dt) {
     for (var i = 0; i < G.debris.length; i++) {
       var d = G.debris[i];
-      if (d.delay > 0) { d.delay -= dt; continue; }
-      d.vy += 1400 * dt;
+      d.vy += GFALL * dt;
       d.x += d.vx * dt; d.y += d.vy * dt; d.rot += d.vr * dt;
       if (d.y >= FLOOR - 4) { d.dead = true; shatter(d.x, FLOOR, d.style); }
     }
     G.debris = G.debris.filter(function (d) { return !d.dead; });
     for (var j = 0; j < G.shards.length; j++) {
       var s = G.shards[j];
-      s.vy += 1200 * dt;
+      s.vy += GFALL * dt;
       s.x += s.vx * dt; s.y += s.vy * dt; s.rot += s.vr * dt;
       if (s.y > FLOOR) { s.y = FLOOR; s.vy *= -0.28; s.vx *= 0.55; s.vr *= 0.5; }
       if (G.state === 'play') s.life -= dt;
     }
     G.shards = G.shards.filter(function (s) { return s.life > 0; });
+    // 落盘回弹
+    for (var k = 0; k < G.stack.length; k++) {
+      var p = G.stack[k];
+      if (p.bounce) {
+        p.bv += (-900 * p.bounce - 30 * p.bv) * dt;
+        p.bounce += p.bv * dt;
+        if (Math.abs(p.bounce) < 0.05 && Math.abs(p.bv) < 1) p.bounce = 0;
+      }
+    }
   }
 
   function updateCamera(dt) {
-    var topH = G.stack.length * PH + PW * 0.9;
+    var topH = -G.topY + PW * 0.9;
     var avail = HAND_SY - 120;
     var sT = Math.max(0.38, Math.min(1, avail / (topH + 40)));
     G.s += (sT - G.s) * Math.min(1, dt * 3);
@@ -681,11 +753,10 @@
   }
 
   function drawStack() {
-    var n = G.stack.length;
-    for (var i = 0; i < n; i++) {
+    for (var i = 0; i < G.stack.length; i++) {
       var pl = G.stack[i];
-      var w = localToWorld(pl.off, -(i + 0.5) * PH);
-      ctx.save(); ctx.translate(w.x, w.y); ctx.rotate(G.theta);
+      ctx.save(); ctx.translate(pl.cx, pl.cy); ctx.rotate(pl.a);
+      if (pl.bounce) ctx.translate(0, pl.bounce);
       drawPlate(PW, pl.style, true);
       ctx.restore();
     }
