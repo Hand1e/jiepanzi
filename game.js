@@ -1,4 +1,4 @@
-/* 稳住！别摔盘子 —— 接盘子叠高小游戏
+/* 顶住！别摔盘子 —— 接盘子叠高小游戏
  * 纯 Canvas 2D，无外部素材。按小红书小工具（离线 H5）规范实现：
  * 不用传感器、不联网、不用浏览器存储；持久化走 xhs.miniTool Storage。
  */
@@ -961,7 +961,7 @@
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.fillStyle = 'rgba(40,20,5,0.55)'; ctx.fillRect(0, 0, W, H);
     var cy = H * 0.24;
-    text('稳住！', W / 2, cy, 46, '#ffd54a', 'center', 'bold', '#7a1f1f');
+    text('顶住！', W / 2, cy, 46, '#ffd54a', 'center', 'bold', '#7a1f1f');
     text('别摔盘子', W / 2, cy + 56, 46, '#ffffff', 'center', 'bold', '#7a1f1f');
     var lines = [
       '👆 按住屏幕左右拖动，用头去接',

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><style>html,body{margin:0;background:#000}canvas{display:block}</style></head>
+<body><canvas id="c" width="1024" height="1024"></canvas>
+<script>
+var c = document.getElementById('c'), ctx = c.getContext('2d'), S = 1024;
+function ell(x, y, rx, ry) { ctx.beginPath(); ctx.ellipse(x, y, Math.max(rx, 0.01), Math.max(ry, 0.01), 0, 0, Math.PI * 2); }
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+
+// 背景：暖橙放射 + 光芒
+var bg = ctx.createRadialGradient(S / 2, S * 0.42, 40, S / 2, S * 0.5, S * 0.75);
+bg.addColorStop(0, '#ffd36b'); bg.addColorStop(0.55, '#ff9a3c'); bg.addColorStop(1, '#e8492f');
+ctx.fillStyle = bg; ctx.fillRect(0, 0, S, S);
+ctx.save(); ctx.translate(S / 2, S * 0.36); ctx.globalAlpha = 0.13; ctx.fillStyle = '#fff';
+for (var i = 0; i < 16; i++) { ctx.rotate(Math.PI / 8); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-60, -900); ctx.lineTo(60, -900); ctx.closePath(); ctx.fill(); }
+ctx.restore(); ctx.globalAlpha = 1;
+
+// 身体
+ctx.fillStyle = '#f7f7f2';
+ctx.beginPath(); ctx.moveTo(300, 1024); ctx.lineTo(330, 900); ctx.quadraticCurveTo(512, 820, 694, 900); ctx.lineTo(724, 1024); ctx.closePath(); ctx.fill();
+ctx.fillStyle = '#26262b';
+ctx.beginPath(); ctx.moveTo(340, 1024); ctx.lineTo(372, 900); ctx.lineTo(470, 870); ctx.lineTo(512, 1000); ctx.lineTo(554, 870); ctx.lineTo(652, 900); ctx.lineTo(684, 1024); ctx.closePath(); ctx.fill();
+ctx.fillStyle = '#e3ad82'; rr(472, 800, 80, 80, 24); ctx.fill();
+ctx.fillStyle = '#c0392b';
+ctx.beginPath(); ctx.moveTo(512, 880); ctx.lineTo(450, 850); ctx.lineTo(450, 910); ctx.closePath(); ctx.fill();
+ctx.beginPath(); ctx.moveTo(512, 880); ctx.lineTo(574, 850); ctx.lineTo(574, 910); ctx.closePath(); ctx.fill();
+ell(512, 880, 16, 16); ctx.fill();
+
+// 头（略歪）
+ctx.save(); ctx.translate(512, 640); ctx.rotate(-0.08);
+var hr = 175;
+ctx.fillStyle = '#efc19a'; ell(-hr, 20, 32, 44); ctx.fill(); ell(hr, 20, 32, 44); ctx.fill();
+var fg = ctx.createRadialGradient(-40, -40, 30, 0, 0, 220);
+fg.addColorStop(0, '#fbdcb8'); fg.addColorStop(1, '#e3a97c');
+ctx.fillStyle = fg; ell(0, 0, hr, hr * 1.08); ctx.fill();
+// 头发 + 刘海
+ctx.fillStyle = '#2a1d17';
+ctx.beginPath(); ctx.ellipse(0, -6, hr + 4, hr * 1.1, 0, Math.PI, Math.PI * 2);
+ctx.quadraticCurveTo(120, -120, 20, -100); ctx.quadraticCurveTo(-100, -90, -hr - 4, -30); ctx.closePath(); ctx.fill();
+// 眉毛（紧张上挑）
+ctx.strokeStyle = '#2a1d17'; ctx.lineWidth = 16; ctx.lineCap = 'round';
+ctx.beginPath(); ctx.moveTo(-110, -38); ctx.lineTo(-40, -62); ctx.stroke();
+ctx.beginPath(); ctx.moveTo(110, -38); ctx.lineTo(40, -62); ctx.stroke();
+// 眼睛往上看
+for (var e = -1; e <= 1; e += 2) {
+  ctx.fillStyle = '#fff'; ell(e * 70, 5, 38, 40); ctx.fill();
+  ctx.fillStyle = '#2a1d17'; ell(e * 70 + 4, -10, 19, 19); ctx.fill();
+  ctx.fillStyle = '#fff'; ell(e * 70 - 2, -16, 6, 6); ctx.fill();
+}
+// 腮红、嘴（O 形，紧张）
+ctx.fillStyle = 'rgba(230,100,80,0.35)'; ell(-115, 80, 34, 20); ctx.fill(); ell(115, 80, 34, 20); ctx.fill();
+ctx.fillStyle = '#7a2e22'; ell(0, 110, 26, 32); ctx.fill();
+ctx.fillStyle = '#c75a4a'; ell(0, 124, 16, 12); ctx.fill();
+// 汗
+ctx.fillStyle = '#7fd0ff';
+ctx.beginPath(); ctx.moveTo(165, -70); ctx.quadraticCurveTo(195, -20, 165, -5); ctx.quadraticCurveTo(135, -20, 165, -70); ctx.fill();
+ctx.restore();
+
+// 毛巾圈
+ctx.save(); ctx.translate(512, 455); ctx.rotate(-0.06);
+ctx.lineWidth = 34; ctx.strokeStyle = '#c0392b'; ell(0, 0, 120, 30); ctx.stroke();
+ctx.strokeStyle = '#fff'; ctx.setLineDash([26, 34]); ell(0, 0, 120, 30); ctx.stroke(); ctx.setLineDash([]);
+ctx.restore();
+
+// 盘子叠（越往上越歪）
+var styles = [['#2e8b57', '#d3eedd'], ['#d4a017', '#f8ecc4'], ['#8e44ad', '#ead8f2'], ['#c0392b', '#f6d6cf'], ['#2f6fb3', '#cfe0f3']];
+function plate(x, y, a, st) {
+  var rx = 210, ry = 54;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(a);
+  ctx.fillStyle = 'rgba(0,0,0,0.18)'; ell(0, ry * 0.6, rx * 0.98, ry * 0.9); ctx.fill();
+  ctx.fillStyle = '#d9dde3'; ell(0, ry * 0.38, rx, ry); ctx.fill();
+  ctx.fillStyle = '#fff'; ell(0, 0, rx, ry); ctx.fill();
+  ctx.strokeStyle = st[0]; ctx.lineWidth = 15; ell(0, 0, rx * 0.88, ry * 0.8); ctx.stroke();
+  ctx.fillStyle = st[1]; ell(0, 4, rx * 0.55, ry * 0.48); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.8)'; ell(-rx * 0.36, -ry * 0.3, rx * 0.15, ry * 0.18); ctx.fill();
+  ctx.restore();
+}
+var x = 512, y = 420;
+for (var k = 0; k < 5; k++) {
+  var a = -0.06 + k * 0.045;
+  plate(x, y, a, styles[k]);
+  x += 14 + k * 9; y -= 62;
+}
+// 最上面那个正在滑落的盘子 + 动势线
+plate(760, 92, 0.38, ['#d4a017', '#f8ecc4']);
+ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 12; ctx.lineCap = 'round';
+[[960, 210, 1000, 225], [930, 250, 965, 270], [985, 40, 1005, 20]].forEach(function (l) { ctx.beginPath(); ctx.moveTo(l[0], l[1]); ctx.lineTo(l[2], l[3]); ctx.stroke(); });
+// 晃动弧线
+ctx.lineWidth = 14;
+ctx.beginPath(); ctx.arc(512, 330, 300, Math.PI * 1.05, Math.PI * 1.2); ctx.stroke();
+ctx.beginPath(); ctx.arc(512, 330, 300, Math.PI * 1.8, Math.PI * 1.95); ctx.stroke();
+</script></body></html>
