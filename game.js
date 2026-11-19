@@ -1,46 +1,70 @@
 /* 稳住！别摔盘子 —— 接盘子叠高小游戏
- * 纯 Canvas 2D，无外部素材。浏览器(index.html) 与 小红书/微信小游戏运行时(game.js 入口) 通用。
+ * 纯 Canvas 2D，无外部素材。按小红书小工具（离线 H5）规范实现：
+ * 不用传感器、不联网、不用浏览器存储；持久化走 xhs.miniTool Storage。
  */
 (function () {
   'use strict';
 
-  // ================= 平台适配 =================
-  var P = (typeof xhs !== 'undefined') ? xhs : (typeof wx !== 'undefined' ? wx : null);
-  var isMini = !!(P && P.createCanvas);
-  var canvas, ctx, W, H, DPR;
+  // ================= 画布 =================
+  var canvas, ctx, W, H, DPR, SAFE_T = 0, SAFE_B = 0;
+
+  // 读安全区：模拟器注入 --safe-area-inset-*，真机用 env()
+  function readSafeArea() {
+    var probe = document.getElementById('safe-probe');
+    if (!probe || !window.getComputedStyle) return;
+    var cs = window.getComputedStyle(probe);
+    SAFE_T = parseFloat(cs.paddingTop) || 0;
+    SAFE_B = parseFloat(cs.paddingBottom) || 0;
+  }
 
   function setupCanvas() {
-    if (isMini) {
-      canvas = P.createCanvas();
-      var info = P.getSystemInfoSync();
-      W = info.windowWidth; H = info.windowHeight; DPR = info.pixelRatio || 2;
-      canvas.width = W * DPR; canvas.height = H * DPR;
-    } else {
-      canvas = document.getElementById('game');
-      var resize = function () {
-        W = window.innerWidth; H = window.innerHeight;
-        DPR = Math.min(window.devicePixelRatio || 1, 3);
-        canvas.width = W * DPR; canvas.height = H * DPR;
-        canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-        layout();
-      };
-      window.addEventListener('resize', resize);
-      resize();
-    }
+    canvas = document.getElementById('game');
+    var resize = function () {
+      W = window.innerWidth; H = window.innerHeight;
+      DPR = Math.min(window.devicePixelRatio || 1, 2.5);
+      canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+      canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+      readSafeArea();
+      layout();
+    };
+    window.addEventListener('resize', resize);
+    resize();
     ctx = canvas.getContext('2d');
   }
 
+  // ================= 存储：xhs.miniTool Storage（9.46+），不可用时只存在内存里 =================
+  var STORE_KEYS = ['plate_best', 'plate_mode', 'plate_total'];
+  var mem = {};
+  function miniTool() { return window.xhs && window.xhs.miniTool; }
   function store(k, v) {
-    try {
-      if (v === undefined) return isMini ? P.getStorageSync(k) : window.localStorage.getItem(k);
-      if (isMini) P.setStorageSync(k, v); else window.localStorage.setItem(k, v);
-    } catch (e) { return null; }
+    if (v === undefined) return mem.hasOwnProperty(k) ? mem[k] : null;
+    mem[k] = v;
+    var mt = miniTool();
+    if (mt && typeof mt.setStorage === 'function') {
+      try {
+        var p = mt.setStorage({ key: k, data: JSON.stringify(v) });
+        if (p && p.catch) p.catch(function () {});
+      } catch (e) {}
+    }
+  }
+  // 启动后异步读回上次的记录，读到后刷新相关变量
+  function loadStore(done) {
+    var mt = miniTool();
+    if (!mt || typeof mt.getStorage !== 'function') return;
+    STORE_KEYS.forEach(function (k) {
+      try {
+        var p = mt.getStorage({ key: k });
+        if (!p || !p.then) return;
+        p.then(function (res) {
+          if (!res || typeof res.data !== 'string' || mem.hasOwnProperty(k)) return;
+          try { mem[k] = JSON.parse(res.data); } catch (e) { return; }
+          done(k);
+        }).catch(function () {});
+      } catch (e) {}
+    });
   }
   function vibrate(long) {
-    try {
-      if (isMini) { long ? P.vibrateLong() : P.vibrateShort({ type: 'medium' }); }
-      else if (navigator.vibrate) navigator.vibrate(long ? 300 : 25);
-    } catch (e) {}
+    try { if (navigator.vibrate) navigator.vibrate(long ? 300 : 25); } catch (e) {}
   }
 
   // ================= 声音（合成，无素材） =================
@@ -48,8 +72,7 @@
   function initAudio() {
     if (actx) return;
     try {
-      if (isMini && P.createWebAudioContext) actx = P.createWebAudioContext();
-      else if (typeof AudioContext !== 'undefined') actx = new AudioContext();
+      if (typeof AudioContext !== 'undefined') actx = new AudioContext();
       else if (typeof webkitAudioContext !== 'undefined') actx = new webkitAudioContext();
       if (actx && actx.resume) actx.resume();
     } catch (e) { actx = null; }
@@ -88,58 +111,29 @@
   };
 
   // ================= 输入 =================
-  var input = { gamma: 0, gammaZero: 0, hasTilt: false, touching: false, touchX: 0, keys: 0 };
-
-  function onGamma(g) {
-    if (typeof g !== 'number' || isNaN(g)) return;
-    input.gamma = g; input.hasTilt = true;
-  }
+  // 按住屏幕任意位置左右拖：手跟着手指的位移走（相对拖动，手指不会挡住盘子）
+  var input = { touching: false, touchX: 0, anchor: null, keys: 0 };
+  var DRAG_GAIN = 1.35;
 
   function setupInput() {
-    if (isMini) {
-      P.onTouchStart(function (e) { var t = e.touches[0]; input.touching = true; input.touchX = t.clientX; onTap(t.clientX, t.clientY); });
-      P.onTouchMove(function (e) { var t = e.touches[0]; if (t) input.touchX = t.clientX; });
-      P.onTouchEnd(function (e) { if (!e.touches || !e.touches.length) input.touching = false; });
-      try {
-        if (P.startDeviceMotionListening && P.onDeviceMotionChange) {
-          P.startDeviceMotionListening({ interval: 'game' });
-          P.onDeviceMotionChange(function (r) { onGamma(r.gamma); });
-        } else if (P.startAccelerometer && P.onAccelerometerChange) {
-          P.startAccelerometer({ interval: 'game' });
-          P.onAccelerometerChange(function (r) {
-            var x = Math.max(-1, Math.min(1, r.x));
-            onGamma(Math.asin(x) * 180 / Math.PI);
-          });
-        }
-      } catch (e) {}
-    } else {
-      canvas.addEventListener('pointerdown', function (e) {
-        input.touching = true; input.touchX = e.clientX; onTap(e.clientX, e.clientY);
-      });
-      window.addEventListener('pointermove', function (e) { if (input.touching) input.touchX = e.clientX; });
-      window.addEventListener('pointerup', function () { input.touching = false; });
-      window.addEventListener('pointercancel', function () { input.touching = false; });
-      window.addEventListener('deviceorientation', function (e) { onGamma(e.gamma); });
-      window.addEventListener('keydown', function (e) {
-        if (e.key === 'ArrowLeft' || e.key === 'a') input.keys = -1;
-        if (e.key === 'ArrowRight' || e.key === 'd') input.keys = 1;
-        if (e.key === ' ' || e.key === 'Enter') { if (G.state === 'title') startGame(mode); else onTap(W / 2, H / 2); }
-      });
-      window.addEventListener('keyup', function (e) {
-        if ((e.key === 'ArrowLeft' || e.key === 'a') && input.keys < 0) input.keys = 0;
-        if ((e.key === 'ArrowRight' || e.key === 'd') && input.keys > 0) input.keys = 0;
-      });
-    }
-  }
-
-  // iOS 13+ 必须在用户点击时申请陀螺仪权限
-  function requestTilt() {
-    if (isMini) return;
-    try {
-      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        DeviceOrientationEvent.requestPermission().catch(function () {});
-      }
-    } catch (e) {}
+    canvas.addEventListener('pointerdown', function (e) {
+      input.touching = true; input.touchX = e.clientX; input.anchor = null;
+      onTap(e.clientX, e.clientY);
+    });
+    window.addEventListener('pointermove', function (e) { if (input.touching) input.touchX = e.clientX; });
+    var up = function () { input.touching = false; input.anchor = null; };
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    window.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowLeft' || e.key === 'a') input.keys = -1;
+      if (e.key === 'ArrowRight' || e.key === 'd') input.keys = 1;
+      if (e.key === ' ' || e.key === 'Enter') { if (G.state === 'title') startGame(mode); else onTap(W / 2, H / 2); }
+    });
+    window.addEventListener('keyup', function (e) {
+      if ((e.key === 'ArrowLeft' || e.key === 'a') && input.keys < 0) input.keys = 0;
+      if ((e.key === 'ArrowRight' || e.key === 'd') && input.keys > 0) input.keys = 0;
+    });
   }
 
   // ================= 常量 & 布局 =================
@@ -169,7 +163,7 @@
       state: 'title',
       t: 0,
       hx: 0, hv: 0, ha: 0, prevHx: 0, prevHv: 0,
-      theta: 0, omega: 0, lean: 0, beta: 0, betaV: 0, gf: input.gamma,
+      theta: 0, omega: 0, lean: 0, beta: 0, betaV: 0,
       topX: 0, topY: 0, topA: 0, wrist: 0, wristV: 0, pending: [],
       stack: [],
       flying: [], debris: [], shards: [], popups: [],
@@ -185,10 +179,8 @@
     if (m === 'hand' || m === 'head') { mode = m; store('plate_mode', m); }
     N_CROSS = mode === 'head' ? 13 : 15;   // 脑袋比手掌难扶
     initAudio();
-    requestTilt();
     resetGame();
     G.state = 'play';
-    input.gammaZero = input.gamma;  // 以当前姿势为“水平”
   }
 
   // ================= 物理参数 =================
@@ -281,20 +273,19 @@
   function updateHand(dt) {
     var r = rangeWorld();
     var target = G.hx;
-    // 陀螺仪读数先滤波，去掉手抖
-    G.gf += (input.gamma - G.gf) * Math.min(1, dt * 20);
-    if (input.touching && G.state === 'play') {
-      target = (input.touchX - W / 2) / G.s;
+    var dragging = input.touching && G.state === 'play';
+    if (dragging) {
+      if (!input.anchor) input.anchor = { x: input.touchX, hx: G.hx };
+      target = input.anchor.hx + (input.touchX - input.anchor.x) * DRAG_GAIN / G.s;
     } else if (input.keys) {
       target = G.hx + input.keys * 900 * dt / G.s;
-    } else if (input.hasTilt) {
-      var d = G.gf - input.gammaZero;
-      d = Math.abs(d) < 2 ? 0 : d - (d > 0 ? 2 : -2);   // 2° 死区
-      target = clamp(d / 28, -1, 1) * r;                  // 倾斜约 30° 到边
     }
-    target = clamp(target, -r, r);
+    var tc = clamp(target, -r, r);
+    // 拖到边以后往回拖要立刻响应：把锚点挪到边上
+    if (dragging && tc !== target) input.anchor.hx = tc - (input.touchX - input.anchor.x) * DRAG_GAIN / G.s;
+    target = tc;
     G.prevHx = G.hx;
-    G.hx += (target - G.hx) * Math.min(1, dt * (input.touching ? 18 : 12));
+    G.hx += (target - G.hx) * Math.min(1, dt * 18);
     var v = (G.hx - G.prevHx) / dt;
     var a = (v - G.hv) / dt;
     G.hv = v;
@@ -1011,7 +1002,7 @@
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     if (G.state === 'play') for (var q = 0; q < G.pending.length; q++) {
       var pd = G.pending[q], ps = toScreen({ x: pd.x0, y: pd.y0 });
-      var px = clamp(ps.x, 22, W - 22), py = clamp(ps.y, 120, H - 22);
+      var px = clamp(ps.x, 22, W - 22), py = clamp(ps.y, 120 + SAFE_T, H - 22 - SAFE_B);
       var ang = pd.side === 0 ? 0 : pd.side === 1 ? Math.PI : pd.side === 2 ? Math.PI / 2 : pd.side === 3 ? -Math.PI / 4 : -Math.PI * 3 / 4;
       var al = 0.55 + 0.45 * Math.sin(G.t * 22);
       ctx.save(); ctx.translate(px, py); ctx.rotate(ang);
@@ -1022,7 +1013,7 @@
     for (var i = 0; i < G.flying.length; i++) {
       var sp = toScreen(G.flying[i]);
       if (sp.x > 0 && sp.x < W && sp.y > 0 && sp.y < H) continue;
-      var x = Math.max(16, Math.min(W - 16, sp.x)), y = Math.max(110, Math.min(H - 16, sp.y));
+      var x = Math.max(16, Math.min(W - 16, sp.x)), y = Math.max(110 + SAFE_T, Math.min(H - 16 - SAFE_B, sp.y));
       ctx.fillStyle = 'rgba(220,40,40,' + (0.6 + 0.4 * Math.sin(G.t * 20)) + ')';
       ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.fill();
       text('!', x, y + 1, 14, '#fff');
@@ -1031,7 +1022,7 @@
 
   function drawHUD() {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    var top = 18;
+    var top = 18 + SAFE_T;
     rr(14, top, 120, 50, 12); ctx.fillStyle = 'rgba(60,30,10,0.75)'; ctx.fill();
     text('已叠', 36, top + 25, 14, '#f3d9a4');
     text(String(G.stack.length), 90, top + 25, 28, '#ffffff');
@@ -1045,8 +1036,8 @@
       ctx.restore();
     }
     ctx.globalAlpha = 1;
-    if (G.state === 'play' && G.t < 4 && !input.hasTilt) {
-      text('拖动手指移动手掌（手机上可倾斜手机）', W / 2, H - 28, 14, '#5a3a1a');
+    if (G.state === 'play' && G.t < 4) {
+      text('按住屏幕任意位置，左右拖动', W / 2, H - 28 - SAFE_B, 15, '#5a3a1a', 'center', 'bold');
     }
     // 摇晃警告
     if (G.state === 'play' && Math.abs(G.lean) > 0.32) {
@@ -1072,7 +1063,7 @@
     text('稳住！', W / 2, cy, 46, '#ffd54a', 'center', 'bold', '#7a1f1f');
     text('别摔盘子', W / 2, cy + 56, 46, '#ffffff', 'center', 'bold', '#7a1f1f');
     var lines = [
-      '📱 左右倾斜手机，移动你的手（或头）',
+      '👆 按住屏幕左右拖动，移动你的手（或头）',
       '🍽️ 盘子从四面八方飞过来，接住叠高',
       '⚖️ 叠得越高越晃，移动手去扶稳',
       '💥 倒了全碎……老板就在你身后'
@@ -1239,20 +1230,39 @@
   }
 
   // ================= 主循环 =================
-  var last = 0;
+  var last = 0, running = true, rafId = 0;
   function frame(ts) {
+    if (!running) return;
     var now = ts || Date.now();
     var dt = last ? (now - last) / 1000 : 0.016;
     last = now;
     dt = Math.min(dt, 1 / 30);
     update(dt);
     render();
-    requestAnimationFrame(frame);
+    rafId = requestAnimationFrame(frame);
   }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      running = false; cancelAnimationFrame(rafId);
+      input.touching = false; input.anchor = null;
+      if (actx && actx.suspend) { try { actx.suspend(); } catch (e) {} }
+    } else if (!running) {
+      running = true; last = 0;
+      if (actx && actx.resume) { try { actx.resume(); } catch (e) {} }
+      rafId = requestAnimationFrame(frame);
+    }
+  });
 
   setupCanvas();
   layout();
   resetGame();
   setupInput();
-  requestAnimationFrame(frame);
+  loadStore(function (k) {
+    if (k === 'plate_best') { best = Math.max(best, parseInt(mem[k], 10) || 0); career.prevBest = best; }
+    else if (k === 'plate_mode' && G.state === 'title') { mode = mem[k] === 'head' ? 'head' : 'hand'; }
+    else if (k === 'plate_total') { career.total = Math.max(career.total, parseInt(mem[k], 10) || 0); }
+  });
+  rafId = requestAnimationFrame(frame);
+  var boot = document.getElementById('boot');
+  if (boot) boot.parentNode.removeChild(boot);
 })();

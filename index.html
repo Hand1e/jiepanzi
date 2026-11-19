@@ -1,16 +1,50 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>稳住！别摔盘子</title>
-<style>
-  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#2b1d14;touch-action:none;-webkit-user-select:none;user-select:none}
-  canvas{display:block}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>稳住！别摔盘子</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: #e9d3a8; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                   "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
+    }
+    canvas { display: block; position: absolute; left: 0; top: 0; }
+    /* 只用来读取安全区数值，不可见 */
+    #safe-probe {
+      position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden;
+      padding-top: 0; padding-bottom: 0;
+      padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+      padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+    }
+    /* JS 运行前的静态首屏，脚本启动后移除 */
+    #boot {
+      position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: #e9d3a8; color: #5a3a1a; text-align: center; padding: 24px;
+    }
+    #boot h1 { font-size: 40px; line-height: 1.25; color: #7a1f1f; }
+    #boot .sub { margin-top: 14px; font-size: 16px; line-height: 1.7; }
+    #boot .status { margin-top: 28px; font-size: 14px; color: #8a6a4a; }
+  </style>
 </head>
 <body>
-<canvas id="game"></canvas>
-<script src="game.js"></script>
+  <canvas id="game"></canvas>
+  <div id="safe-probe"></div>
+  <div id="boot" aria-busy="true">
+    <h1>稳住！<br />别摔盘子</h1>
+    <p class="sub">盘子从四面八方飞过来，<br />按住屏幕左右拖动接住叠高。<br />倒了全碎……老板就在你身后。</p>
+    <p class="status" role="status">正在准备餐厅…若长时间没反应，请退出后重新打开。</p>
+  </div>
+  <script defer src="./game.js"></script>
 </body>
 </html>
