@@ -33,7 +33,7 @@
   }
 
   // ================= 存储：xhs.miniTool Storage（9.46+），不可用时只存在内存里 =================
-  var STORE_KEYS = ['plate_best', 'plate_mode', 'plate_total'];
+  var STORE_KEYS = ['plate_best', 'plate_total'];
   var mem = {};
   function miniTool() { return window.xhs && window.xhs.miniTool; }
   function store(k, v) {
@@ -128,7 +128,7 @@
     window.addEventListener('keydown', function (e) {
       if (e.key === 'ArrowLeft' || e.key === 'a') input.keys = -1;
       if (e.key === 'ArrowRight' || e.key === 'd') input.keys = 1;
-      if (e.key === ' ' || e.key === 'Enter') { if (G.state === 'title') startGame(mode); else onTap(W / 2, H / 2); }
+      if (e.key === ' ' || e.key === 'Enter') { if (G.state === 'title') startGame(); else onTap(W / 2, H / 2); }
     });
     window.addEventListener('keyup', function (e) {
       if ((e.key === 'ArrowLeft' || e.key === 'a') && input.keys < 0) input.keys = 0;
@@ -156,7 +156,6 @@
   // ================= 游戏状态 =================
   var G = {};
   var best = parseInt(store('plate_best') || '0', 10) || 0;
-  var mode = store('plate_mode') === 'head' ? 'head' : 'hand';   // hand=用手托  head=用头顶
 
   function resetGame() {
     G = {
@@ -175,9 +174,7 @@
     };
   }
 
-  function startGame(m) {
-    if (m === 'hand' || m === 'head') { mode = m; store('plate_mode', m); }
-    N_CROSS = mode === 'head' ? 13 : 15;   // 脑袋比手掌难扶
+  function startGame() {
     initAudio();
     resetGame();
     G.state = 'play';
@@ -187,7 +184,7 @@
   var GFALL = 1150;             // 统一重力：飞盘、碎片、盘叠都用它
   var MU_S = 0.5, MU_K = 0.38;  // 盘与盘之间的静/动摩擦（盘沿嵌套，比较涩）
   var HAND_COUPLE = 0.35;       // 手部加速度传到盘叠的比例（游戏性折中）
-  var N_CROSS = 15;             // 叠到大约这么多以后，光靠手托不住，要移动去扶
+  var N_CROSS = 13;             // 叠到大约这么多以后，光靠脑袋顶不住，要移动去扶
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
   // ================= 坐标 / 盘叠形状 =================
@@ -562,10 +559,10 @@
     if (G.reason === 'miss') {
       var side = G.lastMiss && G.lastMiss.side;
       open.push(
-        side ? '刚才那个是从' + side + '飞过来的，你往哪儿伸手呢？' : '眼睁睁看着它掉地上？',
+        side ? '刚才那个是从' + side + '飞过来的，你脑袋往哪儿伸呢？' : '眼睁睁看着它掉地上？',
         '一个都接不住，三个全掉地上了！',
-        '你看着盘子飞过来，手就跟没长一样。',
-        '盘子是往你手上扔的，不是往地上扔的！'
+        '你看着盘子飞过来，脖子就跟焊死了一样。',
+        '盘子是往你头上扔的，不是往地上扔的！'
       );
     } else if (n <= 2) {
       open.push(
@@ -576,7 +573,7 @@
       );
     } else if (n < 10) {
       open.push(
-        '往' + G.tipDir + '歪的时候你就该往' + G.tipDir + '扶，我在后面喊半天了！',
+        '往' + G.tipDir + '歪的时候你就该往' + G.tipDir + '挪，我在后面喊半天了！',
         '叠了' + n + '个，稀里哗啦全没了。',
         '刚叠稳一点你就开始晃，晃什么晃？',
         '你听听这声音，' + b + '个，一个不剩。'
@@ -589,7 +586,7 @@
         '最上面那个是' + plate + '！最贵的那批！'
       );
     }
-    if (mode === 'head') open.push(
+    open.push(
       '谁教你拿脑袋顶盘子的？！杂技团招人你去啊！',
       '用头顶？你当这是马戏团呢？',
       '你脖子歪成那样，盘子能不倒吗？'
@@ -601,11 +598,12 @@
     body.push(
       '一个盘子进价二十八，你自己算算，' + b + '个就是' + money + '块。',
       plate === '盘子' ? '这批盘子从景德镇订的，补货要等一个礼拜。' : '这' + plate + '是景德镇订的，补货要等一个礼拜。',
-      mode === 'head' ? '碎片掉你头上扎破了算谁的？工伤我可不认！' : '扣钱是小事，碎片崩到客人脚边怎么办？出了事谁负责？',
+      '碎片掉你头上扎破了算谁的？工伤我可不认！',
+      '扣钱是小事，碎片崩到客人脚边怎么办？出了事谁负责？',
       '监控我全看着呢，别跟我说是盘子自己倒的。',
       '上个月刚给你涨了两百，你就这么报答我？',
-      '隔壁老李家的小伙子，一手能托二十个。',
-      '你干活能不能用点心？手上稳一点，眼睛看着点！'
+      '隔壁老李家的小伙子，脑袋上能顶二十个。',
+      '你干活能不能用点心？脖子稳一点，眼睛看着点！'
     );
     if (hour >= 10 && hour < 14) body.push('马上中午饭点了，外面坐满了，你让我拿什么装菜？');
     else if (hour >= 16 && hour < 21) body.push('晚上包间订了三桌，盘子都不够了你知道吗？');
@@ -619,8 +617,8 @@
       '这个月全勤奖没了。',
       '再摔一回，你自己去网上下单补上。',
       '别愣着！又来活了，接着叠！',
-      '今天员工餐你别吃了……算了，吃吧，吃饱了手才稳。',
-      '去后面跟王师傅学学怎么托盘子。',
+      '今天员工餐你别吃了……算了，吃吧，吃饱了脖子才稳。',
+      '去后面跟王师傅学学怎么顶盘子。',
       '我不想再听到那个声音了，听见没有？'
     );
 
@@ -741,103 +739,6 @@
     ctx.fillStyle = '#a0693a';
     for (var x = Math.floor(vb.l / 60) * 60; x < vb.r; x += 60) ctx.fillRect(x, FLOOR, 2, 900);
     ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(vb.l - 50, FLOOR, vb.r - vb.l + 100, 6);
-  }
-
-  function skinGrad(y0, y1) {
-    var g = ctx.createLinearGradient(0, y0, 0, y1);
-    g.addColorStop(0, '#f8d5b0'); g.addColorStop(0.55, '#eab68a'); g.addColorStop(1, '#c9875a');
-    return g;
-  }
-  function quad(a, b, c, d) {
-    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(d[0], d[1]); ctx.closePath(); ctx.fill();
-  }
-  // 标题页轮流展示两种姿势
-  function showMode() { return G.state === 'title' ? (Math.floor(G.t / 2.6) % 2 ? 'head' : 'hand') : mode; }
-  function drawCarrier() { if (showMode() === 'head') drawHead(); else drawHandBack(); }
-  function drawCarrierFront() { if (showMode() === 'hand') drawHandFront(); }
-
-  // —— 正面托盘：小臂从下面竖上来，手掌平托在盘底 ——
-  function drawHandBack() {
-    var u = PW, hx = G.hx, pa = palmAngle(), vb = viewBounds();
-    var c = Math.cos(pa), sn = Math.sin(pa);
-    var lx = 0.0, ly = 0.4;                              // 手腕在手掌坐标里的位置
-    var wx = hx + (lx * c - ly * sn) * u, wy = (lx * sn + ly * c) * u;
-    var ex = hx * 0.55 + u * 0.3, ey = Math.max(vb.b, FLOOR) + u * 0.4;   // 肘在屏幕下方
-    var dx = ex - wx, dy = ey - wy, L = Math.sqrt(dx * dx + dy * dy) || 1;
-    dx /= L; dy /= L;
-    var nx = -dy, ny = dx;
-    function P(d, w) { return [wx + dx * d * u + nx * w * u, wy + dy * d * u + ny * w * u]; }
-    var Lu = L / u;
-    // 小臂
-    var g = ctx.createLinearGradient(wx + nx * 0.16 * u, wy + ny * 0.16 * u, wx - nx * 0.16 * u, wy - ny * 0.16 * u);
-    g.addColorStop(0, '#c9875a'); g.addColorStop(0.45, '#f2c49c'); g.addColorStop(1, '#d99a6c');
-    ctx.fillStyle = g;
-    quad(P(-0.05, 0.135), P(0.85, 0.17), P(0.85, -0.17), P(-0.05, -0.135));
-    // 白衬衫袖子 + 卷边
-    var sg = ctx.createLinearGradient(wx + nx * 0.25 * u, wy + ny * 0.25 * u, wx - nx * 0.25 * u, wy - ny * 0.25 * u);
-    sg.addColorStop(0, '#d9d9d2'); sg.addColorStop(0.4, '#ffffff'); sg.addColorStop(1, '#e3e3dc');
-    ctx.fillStyle = sg;
-    quad(P(0.8, 0.21), P(Lu + 1, 0.28), P(Lu + 1, -0.28), P(0.8, -0.21));
-    ctx.strokeStyle = 'rgba(150,150,140,0.45)'; ctx.lineWidth = u * 0.012; ctx.lineCap = 'round';
-    for (var f = 0; f < 4; f++) {
-      var fa = P(0.98 + f * 0.17, 0.17 - f * 0.05), fb = P(1.05 + f * 0.17, -0.06 - f * 0.04);
-      ctx.beginPath(); ctx.moveTo(fa[0], fa[1]); ctx.quadraticCurveTo((fa[0] + fb[0]) / 2 + dx * u * 0.04, (fa[1] + fb[1]) / 2 + dy * u * 0.04, fb[0], fb[1]); ctx.stroke();
-    }
-    ctx.fillStyle = '#ecece4';
-    quad(P(0.78, 0.23), P(0.92, 0.24), P(0.92, -0.24), P(0.78, -0.23));
-    ctx.strokeStyle = 'rgba(140,140,130,0.6)'; ctx.lineWidth = u * 0.01; ctx.stroke();
-
-  }
-
-  // 前景：手心朝上托住盘底，四根手指从前面往上扣住盘沿（看得到指甲），拇指扣左边
-  function drawHandFront() {
-    var u = PW;
-    ctx.save(); ctx.translate(G.hx, 0); ctx.rotate(palmAngle()); ctx.scale(u, u);
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    // 手掌 / 手腕
-    ctx.fillStyle = skinGrad(0.1, 0.45);
-    ctx.beginPath();
-    ctx.moveTo(-0.24, 0.14);
-    ctx.lineTo(0.24, 0.14);
-    ctx.quadraticCurveTo(0.27, 0.3, 0.14, 0.43);
-    ctx.lineTo(-0.14, 0.43);
-    ctx.quadraticCurveTo(-0.27, 0.3, -0.24, 0.14);
-    ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = 'rgba(150,85,50,0.35)'; ctx.lineWidth = 0.008;
-    ctx.beginPath(); ctx.moveTo(-0.1, 0.39); ctx.quadraticCurveTo(0, 0.405, 0.1, 0.39); ctx.stroke();
-    // 拇指：从掌根往左上，指尖压在盘子左沿
-    ctx.fillStyle = skinGrad(-0.05, 0.32);
-    ctx.beginPath();
-    ctx.moveTo(-0.2, 0.34);
-    ctx.quadraticCurveTo(-0.4, 0.27, -0.45, 0.1);
-    ctx.quadraticCurveTo(-0.48, 0.0, -0.43, -0.02);
-    ctx.quadraticCurveTo(-0.37, -0.03, -0.36, 0.05);
-    ctx.quadraticCurveTo(-0.33, 0.17, -0.2, 0.2);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = 'rgba(255,226,216,0.95)';
-    ctx.save(); ctx.translate(-0.415, 0.02); ctx.rotate(0.25); rr(-0.025, -0.03, 0.05, 0.055, 0.022); ctx.fill(); ctx.restore();
-    ctx.strokeStyle = 'rgba(150,85,50,0.4)';
-    ctx.beginPath(); ctx.moveTo(-0.43, 0.13); ctx.quadraticCurveTo(-0.4, 0.14, -0.37, 0.12); ctx.stroke();
-    // 四指（中指最长）
-    var F = [[-0.165, 0.06], [-0.055, 0.03], [0.055, 0.04], [0.165, 0.075]];
-    for (var i = 0; i < 4; i++) {
-      var x = F[i][0], top = F[i][1], w = 0.054;
-      var g = ctx.createLinearGradient(x - w, 0, x + w, 0);
-      g.addColorStop(0, '#dba077'); g.addColorStop(0.45, '#f6cfa8'); g.addColorStop(1, '#d69a70');
-      ctx.fillStyle = g;
-      rr(x - w, top, w * 2, 0.3 - top, w); ctx.fill();
-      ctx.strokeStyle = 'rgba(140,75,45,0.4)'; ctx.lineWidth = 0.007;
-      ctx.stroke();
-      // 指甲
-      ctx.fillStyle = 'rgba(255,228,220,0.95)';
-      rr(x - w * 0.62, top + 0.012, w * 1.24, 0.055, w * 0.5); ctx.fill();
-      ctx.strokeStyle = 'rgba(200,140,120,0.5)'; ctx.lineWidth = 0.005; ctx.stroke();
-      // 指节纹
-      ctx.strokeStyle = 'rgba(150,85,50,0.35)'; ctx.lineWidth = 0.006;
-      ctx.beginPath(); ctx.moveTo(x - w * 0.5, top + 0.12); ctx.quadraticCurveTo(x, top + 0.135, x + w * 0.5, top + 0.12); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x - w * 0.45, top + 0.2); ctx.quadraticCurveTo(x, top + 0.212, x + w * 0.45, top + 0.2); ctx.stroke();
-    }
-    ctx.restore();
   }
 
   // —— 头顶盘子：服务员张着胳膊保持平衡，眼睛盯着飞来的盘子 ——
@@ -1045,7 +946,7 @@
       var vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.7);
       vg.addColorStop(0, 'rgba(255,0,0,0)'); vg.addColorStop(1, 'rgba(255,0,0,' + a + ')');
       ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
-      text(G.lean > 0 ? '往右倒了！快往右扶！' : '往左倒了！快往左扶！', W / 2, 100, 20, '#fff', 'center', 'bold', '#b3261e');
+      text(G.lean > 0 ? '往右倒了！快往右挪！' : '往左倒了！快往左挪！', W / 2, 100, 20, '#fff', 'center', 'bold', '#b3261e');
     }
     // 弹字
     for (var j = 0; j < G.popups.length; j++) {
@@ -1063,25 +964,19 @@
     text('稳住！', W / 2, cy, 46, '#ffd54a', 'center', 'bold', '#7a1f1f');
     text('别摔盘子', W / 2, cy + 56, 46, '#ffffff', 'center', 'bold', '#7a1f1f');
     var lines = [
-      '👆 按住屏幕左右拖动，移动你的手（或头）',
+      '👆 按住屏幕左右拖动，用头去接',
       '🍽️ 盘子从四面八方飞过来，接住叠高',
-      '⚖️ 叠得越高越晃，移动手去扶稳',
+      '⚖️ 叠得越高越晃，往歪的那边挪一挪',
       '💥 倒了全碎……老板就在你身后'
     ];
     for (var i = 0; i < lines.length; i++) text(lines[i], W / 2, cy + 130 + i * 32, 16, '#fff3dc', 'center', 'normal');
-    var bh = 56, gap = 16, bw = Math.min(160, (W - 40 - gap) / 2), by = H * 0.5 + 120;
-    var opts = [['hand', '用手托', '#e74c3c'], ['head', '用头顶', '#e67e22']];
-    text('选个姿势，开始上班', W / 2, by - 22, 16, '#ffd54a');
-    for (var k = 0; k < 2; k++) {
-      var bx = W / 2 - bw - gap / 2 + k * (bw + gap), o = opts[k];
-      var pulse = 1 + Math.sin(G.t * 4 + k * 1.6) * 0.035;
-      ctx.save(); ctx.translate(bx + bw / 2, by + bh / 2); ctx.scale(pulse, pulse);
-      rr(-bw / 2, -bh / 2, bw, bh, 28); ctx.fillStyle = o[2]; ctx.fill();
-      if (o[0] === mode) { ctx.strokeStyle = '#ffd54a'; ctx.lineWidth = 3; ctx.stroke(); }
-      text(o[1], 0, 1, 22, '#fff');
-      ctx.restore();
-      (function (m) { buttons.push({ x: bx, y: by, w: bw, h: bh, fn: function () { startGame(m); } }); })(o[0]);
-    }
+    var bw = 200, bh = 56, bx = W / 2 - bw / 2, by = H * 0.5 + 120;
+    var pulse = 1 + Math.sin(G.t * 4) * 0.04;
+    ctx.save(); ctx.translate(W / 2, by + bh / 2); ctx.scale(pulse, pulse);
+    rr(-bw / 2, -bh / 2, bw, bh, 28); ctx.fillStyle = '#e74c3c'; ctx.fill();
+    text('开始上班', 0, 1, 24, '#fff');
+    ctx.restore();
+    buttons.push({ x: bx, y: by, w: bw, h: bh, fn: startGame });
     if (best) text('最高纪录：' + best + ' 个', W / 2, by + bh + 28, 15, '#ffd54a');
   }
 
@@ -1219,9 +1114,8 @@
     worldTransform();
     drawFloor();
     drawShards();
-    drawCarrier();
+    drawHead();
     if (G.state !== 'collapse' && G.state !== 'boss') { drawStack(); }
-    drawCarrierFront();
     drawFlying();
     drawEdgeWarnings();
     if (G.state === 'title') drawTitle();
@@ -1259,7 +1153,6 @@
   setupInput();
   loadStore(function (k) {
     if (k === 'plate_best') { best = Math.max(best, parseInt(mem[k], 10) || 0); career.prevBest = best; }
-    else if (k === 'plate_mode' && G.state === 'title') { mode = mem[k] === 'head' ? 'head' : 'hand'; }
     else if (k === 'plate_total') { career.total = Math.max(career.total, parseInt(mem[k], 10) || 0); }
   });
   rafId = requestAnimationFrame(frame);
